@@ -1,8 +1,0 @@
-{
-  "name": "ohwant-webhook",
-  "version": "1.0.0",
-  "description": "오원트금융연구소 페이플 웹훅 + 구글시트 연동",
-  "dependencies": {
-    "googleapis": "^131.0.0"
-  }
-}
