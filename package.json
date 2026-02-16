@@ -1,0 +1,12 @@
+{
+  "name": "ohwant-webhook",
+  "version": "2.0.0",
+  "description": "오원트금융연구소 페이플 웹훅 서버",
+  "private": true,
+  "dependencies": {
+    "googleapis": "^118.0.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
