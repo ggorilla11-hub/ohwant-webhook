@@ -27,7 +27,10 @@ module.exports = async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
   if (req.method === 'OPTIONS') return res.status(200).end();
 
-  const data = req.method === 'POST' ? req.body : req.query;
+  // POST 바디 + URL 쿼리 파라미터 모두 병합 (페이플은 POST로 전송하지만 URL 파라미터도 유지)
+  const body  = req.method === 'POST' ? (req.body || {}) : {};
+  const query = req.query || {};
+  const data  = Object.assign({}, query, body); // body가 query를 덮어씀
 
   const rst        = data.PCD_PAY_RST      || '';
   const oid        = data.PCD_PAY_OID      || '';
@@ -36,8 +39,9 @@ module.exports = async function handler(req, res) {
   const cardName   = data.PCD_PAY_CARDNAME || '';
   const cardNum    = data.PCD_PAY_CARDNUM  || '';
   const authDate   = data.PCD_PAY_TIME     || '';
-  const payerName  = data.PCD_PAYER_NAME   || data.payer_name  || '';
-  const payerEmail = data.PCD_PAYER_EMAIL  || data.payer_email || '';
+  // 고객 이름/이메일: URL 파라미터(payer_name, payer_email)에서 우선 수신
+  const payerName  = query.payer_name  || data.PCD_PAYER_NAME  || '';
+  const payerEmail = query.payer_email || data.PCD_PAYER_EMAIL || '';
 
   console.log('[페이플 웹훅 수신]', { rst, oid, total, payerName, payerEmail });
 
