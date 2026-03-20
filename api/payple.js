@@ -60,6 +60,36 @@ module.exports = async function handler(req, res) {
     : '';
 
   // ━━━━━━━━━━━━━━━━━━━━
+  // 중복 처리 방지 (동일 주문번호 2회 호출 차단)
+  // 페이플이 callbackFunction + PCD_RST_URL 두 경로로 호출하는 경우 대비
+  // ━━━━━━━━━━━━━━━━━━━━
+  if (!oid) {
+    console.log('[중복방지] 주문번호 없음 — 무시');
+    return res.status(200).json({ result: 'ignored', reason: 'no_oid' });
+  }
+
+  // 구글시트에서 동일 주문번호 존재 여부 확인
+  try {
+    const saJsonCheck = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT || '{}');
+    const authCheck   = new google.auth.GoogleAuth({
+      credentials: saJsonCheck,
+      scopes: ['https://www.googleapis.com/auth/spreadsheets'],
+    });
+    const sheetsCheck = google.sheets({ version: 'v4', auth: authCheck });
+    const existing = await sheetsCheck.spreadsheets.values.get({
+      spreadsheetId: process.env.SPREADSHEET_ID,
+      range: `${service.sheet}!B:B`,
+    });
+    const rows = (existing.data.values || []).flat();
+    if (rows.includes(oid)) {
+      console.log('[중복방지] 이미 처리된 주문번호:', oid, '— 중복 차단');
+      return res.redirect(302, `${APP_URL}?pay_result=success&oid=${encodeURIComponent(oid)}`);
+    }
+  } catch(e) {
+    console.log('[중복방지] 확인 실패 (계속 진행):', e.message);
+  }
+
+  // ━━━━━━━━━━━━━━━━━━━━
   // ① 구글시트 기록
   // ━━━━━━━━━━━━━━━━━━━━
   try {
