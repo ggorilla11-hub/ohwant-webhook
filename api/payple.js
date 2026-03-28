@@ -1,6 +1,6 @@
 // ohwant-webhook/api/payple.js
 // 페이플 결제 완료 웹훅
-// ① 구글시트 자동 기록
+// ① 구글시트 자동 기록 (전화번호 포함)
 // ② 고객 감사 이메일 발송
 // ③ 앱 화면으로 복귀
 //
@@ -16,8 +16,9 @@ const nodemailer  = require('nodemailer');
 const APP_URL = 'https://financial-house-building.vercel.app';
 
 const SERVICE_MAP = {
-  FH_MONTH: { name: '금융집짓기 실버 월간구독', sheet: '금융집짓기_구독DB' },
-  FH_YEAR:  { name: '금융집짓기 실버 연간구독', sheet: '금융집짓기_구독DB' },
+  FH_SINGLE: { name: '금융집짓기 단일상담 1회',   sheet: '금융집짓기_구독DB' },
+  FH_MONTH:  { name: '금융집짓기 실버 월간구독',   sheet: '금융집짓기_구독DB' },
+  FH_YEAR:   { name: '금융집짓기 실버 연간구독',   sheet: '금융집짓기_구독DB' },
 };
 
 module.exports = async function handler(req, res) {
@@ -39,11 +40,12 @@ module.exports = async function handler(req, res) {
   const cardName   = data.PCD_PAY_CARDNAME || '';
   const cardNum    = data.PCD_PAY_CARDNUM  || '';
   const authDate   = data.PCD_PAY_TIME     || '';
-  // 고객 이름/이메일: URL 파라미터(payer_name, payer_email)에서 우선 수신
+  // 고객 이름/이메일/전화번호: URL 파라미터(payer_name, payer_email, payer_phone)에서 우선 수신
   const payerName  = query.payer_name  || data.PCD_PAYER_NAME  || '';
   const payerEmail = query.payer_email || data.PCD_PAYER_EMAIL || '';
+  const payerPhone = query.payer_phone || '';
 
-  console.log('[페이플 웹훅 수신]', { rst, oid, total, payerName, payerEmail });
+  console.log('[페이플 웹훅 수신]', { rst, oid, total, payerName, payerEmail, payerPhone });
 
   // 결제 실패
   if (rst !== 'success') {
@@ -52,16 +54,18 @@ module.exports = async function handler(req, res) {
     );
   }
 
-  const serviceKey = oid.includes('YEAR') ? 'FH_YEAR' : 'FH_MONTH';
+  const serviceKey = oid.includes('SINGLE') ? 'FH_SINGLE'
+                   : oid.includes('YEAR')   ? 'FH_YEAR'
+                   : 'FH_MONTH';
   const service    = SERVICE_MAP[serviceKey];
-  const today      = new Date().toLocaleString('ko-KR', { timeZone: 'Asia/Seoul' });
+  const now        = new Date();
+  const today      = now.toLocaleString('ko-KR', { timeZone: 'Asia/Seoul' });
   const maskedCard = cardNum
     ? cardNum.replace(/(\d{4})(\d+)(\d{4})/, '$1-****-****-$3')
     : '';
 
   // ━━━━━━━━━━━━━━━━━━━━
   // 중복 처리 방지 (동일 주문번호 2회 호출 차단)
-  // 페이플이 callbackFunction + PCD_RST_URL 두 경로로 호출하는 경우 대비
   // ━━━━━━━━━━━━━━━━━━━━
   if (!oid) {
     console.log('[중복방지] 주문번호 없음 — 무시');
@@ -90,7 +94,7 @@ module.exports = async function handler(req, res) {
   }
 
   // ━━━━━━━━━━━━━━━━━━━━
-  // ① 구글시트 기록
+  // ① 구글시트 기록 (전화번호 포함 A~K 11컬럼)
   // ━━━━━━━━━━━━━━━━━━━━
   try {
     const saJson = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT || '{}');
@@ -101,7 +105,7 @@ module.exports = async function handler(req, res) {
     const sheets = google.sheets({ version: 'v4', auth });
     await sheets.spreadsheets.values.append({
       spreadsheetId: process.env.SPREADSHEET_ID,
-      range: `${service.sheet}!A:J`,
+      range: `${service.sheet}!A:K`,
       valueInputOption: 'USER_ENTERED',
       requestBody: {
         values: [[
@@ -110,15 +114,16 @@ module.exports = async function handler(req, res) {
           service.name, // C: 서비스명
           total,        // D: 결제금액
           payerName,    // E: 고객명
-          payerEmail,   // F: 고객이메일
-          cardName,     // G: 카드사
-          maskedCard,   // H: 카드번호(마스킹)
-          authDate,     // I: 승인일시
-          rst,          // J: 결제결과
+          payerPhone,   // F: 전화번호 ★ 추가
+          payerEmail,   // G: 고객이메일
+          cardName,     // H: 카드사
+          maskedCard,   // I: 카드번호(마스킹)
+          authDate,     // J: 승인일시
+          rst,          // K: 결제결과
         ]],
       },
     });
-    console.log('[구글시트] 기록 완료:', oid);
+    console.log('[구글시트] 기록 완료:', oid, '전화번호:', payerPhone);
   } catch (e) {
     console.error('[구글시트] 기록 실패:', e.message);
   }
@@ -137,9 +142,12 @@ module.exports = async function handler(req, res) {
       });
 
       const amountFmt     = Number(total).toLocaleString('ko-KR');
-      const planLabel     = serviceKey === 'FH_YEAR' ? '연간 구독' : '월간 구독';
+      const planLabel     = serviceKey === 'FH_YEAR'   ? '연간 구독'
+                          : serviceKey === 'FH_SINGLE' ? '단일상담 1회'
+                          : '월간 구독';
       const recipientName = payerName || '회원';
-      const todayLabel    = new Date().toLocaleDateString('ko-KR', {
+      const todayLabel    = now.toLocaleDateString('ko-KR', {
+        timeZone: 'Asia/Seoul',
         year: 'numeric', month: 'long', day: 'numeric',
       });
 
@@ -195,7 +203,7 @@ module.exports = async function handler(req, res) {
     <table width="100%" cellpadding="0" cellspacing="0">
       <tr><td style="padding:6px 0;width:24px;vertical-align:top;">🤖</td>
         <td style="padding:6px 0 6px 8px;">
-          <div style="font-size:13px;font-weight:700;color:#0B1D3A;">AI 재무진단 무제한</div>
+          <div style="font-size:13px;font-weight:700;color:#0B1D3A;">AI 재무진단 음성 30분 + 텍스트 무제한</div>
           <div style="font-size:11px;color:#888;">24시간 언제든지</div>
         </td>
       </tr>
