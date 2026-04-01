@@ -1,8 +1,9 @@
 // ohwant-webhook/api/payple.js
-// 페이플 결제 완료 웹훅
-// ① 구글시트 자동 기록 (전화번호 포함)
-// ② 고객 감사 이메일 발송
-// ③ 앱 화면으로 복귀
+// 페이플 결제 완료 웹훅 v2.0
+// ① 구글시트 자동 기록 (브론즈/실버/골드/전문가 4개 플랜)
+// ② 빌링키(PCD_PAYER_ID) 저장 (월정기구독 자동 청구용)
+// ③ 고객 감사 이메일 발송
+// ④ 앱 화면으로 복귀
 //
 // Vercel 환경변수 (Settings > Environment Variables):
 //   SPREADSHEET_ID         : 구글시트 ID
@@ -15,11 +16,33 @@ const nodemailer  = require('nodemailer');
 
 const APP_URL = 'https://financial-house-building.vercel.app';
 
-const SERVICE_MAP = {
-  FH_SINGLE: { name: '금융집짓기 단일상담 1회',   sheet: '금융집짓기_구독DB' },
-  FH_MONTH:  { name: '금융집짓기 실버 월간구독',   sheet: '금융집짓기_구독DB' },
-  FH_YEAR:   { name: '금융집짓기 실버 연간구독',   sheet: '금융집짓기_구독DB' },
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// 플랜 매핑 (주문번호 prefix → 플랜 정보)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+const PLAN_MAP = {
+  // 브론즈
+  'BRONZE_SINGLE': { name: '브론즈 단일진단 1회',    label: '브론즈',  type: 'single',  credit: 10,  sheet: '금융집짓기_구독DB' },
+  // 실버
+  'SILVER_MONTH':  { name: '실버 월정기구독',         label: '실버',    type: 'monthly', credit: 20,  sheet: '금융집짓기_구독DB' },
+  'SILVER_YEAR':   { name: '실버 연회비',             label: '실버',    type: 'annual',  credit: 20,  sheet: '금융집짓기_구독DB' },
+  // 골드
+  'GOLD_MONTH':    { name: '골드 월정기구독',         label: '골드',    type: 'monthly', credit: 40,  sheet: '금융집짓기_구독DB' },
+  'GOLD_YEAR':     { name: '골드 연회비',             label: '골드',    type: 'annual',  credit: 40,  sheet: '금융집짓기_구독DB' },
+  // 전문가
+  'EXPERT_MONTH':  { name: '전문가(FC) 월정기구독',   label: '전문가',  type: 'monthly', credit: 40,  sheet: '금융집짓기_구독DB' },
+  'EXPERT_YEAR':   { name: '전문가(FC) 연회비',       label: '전문가',  type: 'annual',  credit: 40,  sheet: '금융집짓기_구독DB' },
+  // 구버전 호환 (기존 주문번호)
+  'SINGLE':        { name: '단일상담 1회',            label: '단일',    type: 'single',  credit: 10,  sheet: '금융집짓기_구독DB' },
+  'MONTH':         { name: '월정기구독',              label: '실버',    type: 'monthly', credit: 20,  sheet: '금융집짓기_구독DB' },
+  'YEAR':          { name: '연회비구독',              label: '실버',    type: 'annual',  credit: 20,  sheet: '금융집짓기_구독DB' },
 };
+
+// 주문번호에서 플랜 정보 추출
+function getPlanInfo(oid) {
+  // FH_GOLD_MONTH_1234567 → GOLD_MONTH
+  const match = oid.replace(/^FH_/, '').replace(/_\d+$/, '');
+  return PLAN_MAP[match] || PLAN_MAP['SINGLE'];
+}
 
 module.exports = async function handler(req, res) {
 
@@ -28,10 +51,10 @@ module.exports = async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
   if (req.method === 'OPTIONS') return res.status(200).end();
 
-  // POST 바디 + URL 쿼리 파라미터 모두 병합 (페이플은 POST로 전송하지만 URL 파라미터도 유지)
+  // POST 바디 + URL 쿼리 파라미터 병합
   const body  = req.method === 'POST' ? (req.body || {}) : {};
   const query = req.query || {};
-  const data  = Object.assign({}, query, body); // body가 query를 덮어씀
+  const data  = Object.assign({}, query, body);
 
   const rst        = data.PCD_PAY_RST      || '';
   const oid        = data.PCD_PAY_OID      || '';
@@ -40,24 +63,29 @@ module.exports = async function handler(req, res) {
   const cardName   = data.PCD_PAY_CARDNAME || '';
   const cardNum    = data.PCD_PAY_CARDNUM  || '';
   const authDate   = data.PCD_PAY_TIME     || '';
-  // 고객 이름/이메일/전화번호: URL 파라미터(payer_name, payer_email, payer_phone)에서 우선 수신
+  // ★ 빌링키 (월정기구독 자동 청구에 사용)
+  const payerId    = data.PCD_PAYER_ID     || '';
+  // 고객 정보
   const payerName  = query.payer_name  || data.PCD_PAYER_NAME  || '';
   const payerEmail = query.payer_email || data.PCD_PAYER_EMAIL || '';
-  const payerPhone = query.payer_phone || '';
+  const payerPhone = query.payer_phone || data.PCD_PAYER_HP    || '';
+  const payerUid   = query.uid         || '';
+  const planParam  = query.plan        || '';
 
-  console.log('[페이플 웹훅 수신]', { rst, oid, total, payerName, payerEmail, payerPhone });
+  console.log('[페이플 웹훅 수신]', { rst, oid, total, payerName, payerEmail, payerPhone, payerId: payerId ? '***발급됨***' : '없음' });
 
   // 결제 실패
   if (rst !== 'success') {
+    console.log('[페이플] 결제 실패:', msg);
     return res.redirect(302,
       `${APP_URL}?pay_result=fail&msg=${encodeURIComponent(msg)}`
     );
   }
 
-  const serviceKey = oid.includes('SINGLE') ? 'FH_SINGLE'
-                   : oid.includes('YEAR')   ? 'FH_YEAR'
-                   : 'FH_MONTH';
-  const service    = SERVICE_MAP[serviceKey];
+  // 플랜 정보 추출
+  const planInfo = getPlanInfo(oid);
+  const isMonthly = (planInfo.type === 'monthly');
+
   const now        = new Date();
   const today      = now.toLocaleString('ko-KR', { timeZone: 'Asia/Seoul' });
   const maskedCard = cardNum
@@ -65,14 +93,12 @@ module.exports = async function handler(req, res) {
     : '';
 
   // ━━━━━━━━━━━━━━━━━━━━
-  // 중복 처리 방지 (동일 주문번호 2회 호출 차단)
+  // 중복 처리 방지
   // ━━━━━━━━━━━━━━━━━━━━
   if (!oid) {
-    console.log('[중복방지] 주문번호 없음 — 무시');
     return res.status(200).json({ result: 'ignored', reason: 'no_oid' });
   }
 
-  // 구글시트에서 동일 주문번호 존재 여부 확인
   try {
     const saJsonCheck = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT || '{}');
     const authCheck   = new google.auth.GoogleAuth({
@@ -82,11 +108,11 @@ module.exports = async function handler(req, res) {
     const sheetsCheck = google.sheets({ version: 'v4', auth: authCheck });
     const existing = await sheetsCheck.spreadsheets.values.get({
       spreadsheetId: process.env.SPREADSHEET_ID,
-      range: `${service.sheet}!B:B`,
+      range: `${planInfo.sheet}!B:B`,
     });
     const rows = (existing.data.values || []).flat();
     if (rows.includes(oid)) {
-      console.log('[중복방지] 이미 처리된 주문번호:', oid, '— 중복 차단');
+      console.log('[중복방지] 이미 처리된 주문번호:', oid);
       return res.redirect(302, `${APP_URL}?pay_result=success&oid=${encodeURIComponent(oid)}`);
     }
   } catch(e) {
@@ -94,7 +120,7 @@ module.exports = async function handler(req, res) {
   }
 
   // ━━━━━━━━━━━━━━━━━━━━
-  // ① 구글시트 기록 (전화번호 포함 A~K 11컬럼)
+  // ① 구글시트 기록 (A~M 13컬럼)
   // ━━━━━━━━━━━━━━━━━━━━
   try {
     const saJson = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT || '{}');
@@ -103,33 +129,89 @@ module.exports = async function handler(req, res) {
       scopes: ['https://www.googleapis.com/auth/spreadsheets'],
     });
     const sheets = google.sheets({ version: 'v4', auth });
+
+    // 다음 결제일 계산 (월정기: 다음달 15일)
+    const nextBillDate = isMonthly
+      ? (() => {
+          const d = new Date(now);
+          d.setMonth(d.getMonth() + 1);
+          d.setDate(15);
+          return d.toLocaleDateString('ko-KR', { timeZone: 'Asia/Seoul', year: 'numeric', month: '2-digit', day: '2-digit' });
+        })()
+      : '-';
+
     await sheets.spreadsheets.values.append({
       spreadsheetId: process.env.SPREADSHEET_ID,
-      range: `${service.sheet}!A:K`,
+      range: `${planInfo.sheet}!A:M`,
       valueInputOption: 'USER_ENTERED',
       requestBody: {
         values: [[
-          today,        // A: 결제일시
-          oid,          // B: 주문번호
-          service.name, // C: 서비스명
-          total,        // D: 결제금액
-          payerName,    // E: 고객명
-          payerPhone,   // F: 전화번호 ★ 추가
-          payerEmail,   // G: 고객이메일
-          cardName,     // H: 카드사
-          maskedCard,   // I: 카드번호(마스킹)
-          authDate,     // J: 승인일시
-          rst,          // K: 결제결과
+          today,           // A: 결제일시
+          oid,             // B: 주문번호
+          planInfo.name,   // C: 플랜명
+          total,           // D: 결제금액
+          payerName,       // E: 고객명
+          payerPhone,      // F: 전화번호
+          payerEmail,      // G: 이메일
+          cardName,        // H: 카드사
+          maskedCard,      // I: 카드번호(마스킹)
+          authDate,        // J: 승인일시
+          rst,             // K: 결제결과
+          payerId || '-',  // L: 빌링키 (월정기구독)
+          nextBillDate,    // M: 다음 결제일
         ]],
       },
     });
-    console.log('[구글시트] 기록 완료:', oid, '전화번호:', payerPhone);
+    console.log('[구글시트] 기록 완료:', oid, '플랜:', planInfo.name, '빌링키:', payerId ? '있음' : '없음');
   } catch (e) {
     console.error('[구글시트] 기록 실패:', e.message);
   }
 
   // ━━━━━━━━━━━━━━━━━━━━
-  // ② 감사 이메일 발송
+  // ② 빌링키 별도 시트 저장 (월정기구독 자동 청구용)
+  // ━━━━━━━━━━━━━━━━━━━━
+  if (isMonthly && payerId) {
+    try {
+      const saJson = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT || '{}');
+      const auth   = new google.auth.GoogleAuth({
+        credentials: saJson,
+        scopes: ['https://www.googleapis.com/auth/spreadsheets'],
+      });
+      const sheets = google.sheets({ version: 'v4', auth });
+
+      // 다음 결제일
+      const nextBill = new Date(now);
+      nextBill.setMonth(nextBill.getMonth() + 1);
+      nextBill.setDate(15);
+      const nextBillStr = nextBill.toLocaleDateString('ko-KR', { timeZone: 'Asia/Seoul', year: 'numeric', month: '2-digit', day: '2-digit' });
+
+      await sheets.spreadsheets.values.append({
+        spreadsheetId: process.env.SPREADSHEET_ID,
+        range: '빌링키_구독DB!A:J',
+        valueInputOption: 'USER_ENTERED',
+        requestBody: {
+          values: [[
+            today,           // A: 등록일시
+            payerName,       // B: 고객명
+            payerPhone,      // C: 전화번호
+            payerEmail,      // D: 이메일
+            payerId,         // E: 빌링키 (PCD_PAYER_ID)
+            planInfo.name,   // F: 플랜명
+            total,           // G: 월 결제금액
+            '활성',          // H: 구독상태
+            nextBillStr,     // I: 다음 결제일
+            oid,             // J: 최초 주문번호
+          ]],
+        },
+      });
+      console.log('[빌링키DB] 저장 완료:', payerName, payerId.slice(0,8) + '...');
+    } catch (e) {
+      console.error('[빌링키DB] 저장 실패:', e.message);
+    }
+  }
+
+  // ━━━━━━━━━━━━━━━━━━━━
+  // ③ 감사 이메일 발송
   // ━━━━━━━━━━━━━━━━━━━━
   if (payerEmail) {
     try {
@@ -142,19 +224,22 @@ module.exports = async function handler(req, res) {
       });
 
       const amountFmt     = Number(total).toLocaleString('ko-KR');
-      const planLabel     = serviceKey === 'FH_YEAR'   ? '연간 구독'
-                          : serviceKey === 'FH_SINGLE' ? '단일상담 1회'
-                          : '월간 구독';
       const recipientName = payerName || '회원';
       const todayLabel    = now.toLocaleDateString('ko-KR', {
         timeZone: 'Asia/Seoul',
         year: 'numeric', month: 'long', day: 'numeric',
       });
 
+      // 플랜별 크레딧 안내
+      const creditLabel = planInfo.credit + '분';
+      const typeLabel   = isMonthly ? '월정기구독 (매월 15일 자동 결제)'
+                        : planInfo.type === 'annual' ? '연회비 구독'
+                        : '단일 이용권';
+
       await transporter.sendMail({
-        from:    `"오상열 CFP · 금융집짓기®" <${process.env.GMAIL_USER}>`,
+        from:    `"오상열 CFP · AI머니야" <${process.env.GMAIL_USER}>`,
         to:      payerEmail,
-        subject: `[금융집짓기®] ${recipientName}님, 구독이 완료되었습니다 🏠`,
+        subject: `[AI머니야] ${recipientName}님, ${planInfo.label} 플랜 결제가 완료되었습니다 🎉`,
         html: `
 <!DOCTYPE html><html lang="ko">
 <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"></head>
@@ -163,28 +248,36 @@ module.exports = async function handler(req, res) {
 <tr><td align="center">
 <table width="560" cellpadding="0" cellspacing="0" style="max-width:560px;width:100%;background:#fff;border-radius:16px;overflow:hidden;">
   <tr><td style="background:#0B1D3A;padding:28px 32px;text-align:center;">
-    <div style="font-size:22px;font-weight:900;color:#C9972A;">🏠 금융집짓기®</div>
-    <div style="font-size:12px;color:rgba(255,255,255,0.6);margin-top:4px;">AI 재무설계 시뮬레이터</div>
+    <div style="font-size:22px;font-weight:900;color:#C9972A;">🏠 AI머니야</div>
+    <div style="font-size:12px;color:rgba(255,255,255,0.6);margin-top:4px;">금융집짓기® AI 재무진단</div>
   </td></tr>
   <tr><td style="padding:32px 32px 0;">
     <div style="font-size:20px;font-weight:900;color:#0B1D3A;margin-bottom:8px;">${recipientName}님, 환영합니다! 🎉</div>
     <div style="font-size:14px;color:#555;line-height:1.7;">
-      금융집짓기® ${planLabel}에 가입해 주셔서 진심으로 감사드립니다.<br>
-      20년 CFP 노하우를 바탕으로 맞춤형 재무설계를 지원해 드리겠습니다.
+      AI머니야 <strong>${planInfo.label} 플랜</strong>에 가입해 주셔서 진심으로 감사드립니다.<br>
+      오상열 CFP 20년 노하우를 담은 AI 재무진단을 바로 이용하실 수 있습니다.
     </div>
   </td></tr>
   <tr><td style="padding:20px 32px;">
     <table width="100%" cellpadding="0" cellspacing="0" style="background:#f8f5ee;border-radius:12px;border:1px solid rgba(201,151,42,0.25);">
     <tr><td style="padding:20px 24px;">
-      <div style="font-size:11px;font-weight:700;color:#C9972A;margin-bottom:12px;">구독 정보</div>
+      <div style="font-size:11px;font-weight:700;color:#C9972A;margin-bottom:12px;">결제 정보</div>
       <table width="100%" cellpadding="0" cellspacing="0">
         <tr>
-          <td style="font-size:13px;color:#666;padding-bottom:8px;">구독 플랜</td>
-          <td style="font-size:13px;font-weight:700;color:#0B1D3A;text-align:right;padding-bottom:8px;">${planLabel}</td>
+          <td style="font-size:13px;color:#666;padding-bottom:8px;">플랜</td>
+          <td style="font-size:13px;font-weight:700;color:#0B1D3A;text-align:right;padding-bottom:8px;">${planInfo.label} (${planInfo.name})</td>
+        </tr>
+        <tr>
+          <td style="font-size:13px;color:#666;padding-bottom:8px;">결제 유형</td>
+          <td style="font-size:13px;font-weight:700;color:#0B1D3A;text-align:right;padding-bottom:8px;">${typeLabel}</td>
         </tr>
         <tr>
           <td style="font-size:13px;color:#666;padding-bottom:8px;">결제 금액</td>
           <td style="font-size:13px;font-weight:700;color:#0B1D3A;text-align:right;padding-bottom:8px;">₩${amountFmt}</td>
+        </tr>
+        <tr>
+          <td style="font-size:13px;color:#666;padding-bottom:8px;">AI 음성 크레딧</td>
+          <td style="font-size:13px;font-weight:700;color:#C9972A;text-align:right;padding-bottom:8px;">${creditLabel}</td>
         </tr>
         <tr>
           <td style="font-size:13px;color:#666;padding-bottom:8px;">가입일</td>
@@ -198,35 +291,6 @@ module.exports = async function handler(req, res) {
     </td></tr>
     </table>
   </td></tr>
-  <tr><td style="padding:0 32px 20px;">
-    <div style="font-size:13px;font-weight:700;color:#0B1D3A;margin-bottom:12px;">지금 바로 이용하실 수 있는 서비스</div>
-    <table width="100%" cellpadding="0" cellspacing="0">
-      <tr><td style="padding:6px 0;width:24px;vertical-align:top;">🤖</td>
-        <td style="padding:6px 0 6px 8px;">
-          <div style="font-size:13px;font-weight:700;color:#0B1D3A;">AI 재무진단 음성 30분 + 텍스트 무제한</div>
-          <div style="font-size:11px;color:#888;">24시간 언제든지</div>
-        </td>
-      </tr>
-      <tr><td style="padding:6px 0;width:24px;vertical-align:top;">📈</td>
-        <td style="padding:6px 0 6px 8px;">
-          <div style="font-size:13px;font-weight:700;color:#0B1D3A;">비포 &amp; 에프터 히스토리 대시보드</div>
-          <div style="font-size:11px;color:#888;">재무 성장이 눈에 보임</div>
-        </td>
-      </tr>
-      <tr><td style="padding:6px 0;width:24px;vertical-align:top;">🏠</td>
-        <td style="padding:6px 0 6px 8px;">
-          <div style="font-size:13px;font-weight:700;color:#0B1D3A;">시뮬레이터 7대 영역 전체</div>
-          <div style="font-size:11px;color:#888;">은퇴·주택·투자·부채·목돈·세금·보험</div>
-        </td>
-      </tr>
-      <tr><td style="padding:6px 0;width:24px;vertical-align:top;">👨‍💼</td>
-        <td style="padding:6px 0 6px 8px;">
-          <div style="font-size:13px;font-weight:700;color:#0B1D3A;">CFP 직접 상담 우선 예약</div>
-          <div style="font-size:11px;color:#888;">회원 전용 우선 일정</div>
-        </td>
-      </tr>
-    </table>
-  </td></tr>
   <tr><td style="padding:0 32px 28px;">
     <div style="background:#EFF6FF;border-radius:10px;padding:14px 18px;">
       <div style="font-size:12px;color:#0B1D3A;line-height:1.7;">
@@ -238,7 +302,7 @@ module.exports = async function handler(req, res) {
   <tr><td style="background:#0B1D3A;padding:20px 32px;text-align:center;">
     <div style="font-size:11px;color:rgba(255,255,255,0.4);line-height:1.8;">
       오원트금융연구소 &nbsp;|&nbsp; 대표: 오상열 CFP<br>
-      본 메일은 금융집짓기® 구독 완료 시 자동 발송됩니다.
+      본 메일은 AI머니야 결제 완료 시 자동 발송됩니다.
     </div>
   </td></tr>
 </table>
@@ -252,10 +316,8 @@ module.exports = async function handler(req, res) {
     }
   }
 
-  // ━━━━━━━━━━━━━━━━━━━━
-  // ③ 앱 화면으로 복귀
-  // ━━━━━━━━━━━━━━━━━━━━
+  // ④ 앱 화면으로 복귀
   return res.redirect(302,
-    `${APP_URL}?pay_result=success&oid=${encodeURIComponent(oid)}`
+    `${APP_URL}?pay_result=success&oid=${encodeURIComponent(oid)}&plan=${encodeURIComponent(planInfo.label)}`
   );
 };
