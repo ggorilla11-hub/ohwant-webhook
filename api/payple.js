@@ -21,20 +21,27 @@ const APP_URL = 'https://financial-house-building.vercel.app';
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 const PLAN_MAP = {
   // 브론즈
-  'BRONZE_SINGLE': { name: '브론즈 단일진단 1회',    label: '브론즈',  type: 'single',  credit: 10,  sheet: '금융집짓기_구독DB' },
+  'BRONZE_SINGLE': { name: '브론즈 단일진단 1회',    label: '브론즈',  type: 'single',  credit: 10, amount: 9900,   sheet: '금융집짓기_구독DB' },
   // 실버
-  'SILVER_MONTH':  { name: '실버 월정기구독',         label: '실버',    type: 'monthly', credit: 20,  sheet: '금융집짓기_구독DB' },
-  'SILVER_YEAR':   { name: '실버 연회비',             label: '실버',    type: 'annual',  credit: 20,  sheet: '금융집짓기_구독DB' },
+  'SILVER_MONTH':  { name: '실버 월정기구독',         label: '실버',    type: 'monthly', credit: 20, amount: 9900,   sheet: '금융집짓기_구독DB' },
+  'SILVER_YEAR':   { name: '실버 연회비',             label: '실버',    type: 'annual',  credit: 20, amount: 99000,  sheet: '금융집짓기_구독DB' },
   // 골드
-  'GOLD_MONTH':    { name: '골드 월정기구독',         label: '골드',    type: 'monthly', credit: 40,  sheet: '금융집짓기_구독DB' },
-  'GOLD_YEAR':     { name: '골드 연회비',             label: '골드',    type: 'annual',  credit: 40,  sheet: '금융집짓기_구독DB' },
+  'GOLD_MONTH':    { name: '골드 월정기구독',         label: '골드',    type: 'monthly', credit: 40, amount: 19900,  sheet: '금융집짓기_구독DB' },
+  'GOLD_YEAR':     { name: '골드 연회비',             label: '골드',    type: 'annual',  credit: 40, amount: 199000, sheet: '금융집짓기_구독DB' },
   // 전문가
-  'EXPERT_MONTH':  { name: '전문가(FC) 월정기구독',   label: '전문가',  type: 'monthly', credit: 40,  sheet: '금융집짓기_구독DB' },
-  'EXPERT_YEAR':   { name: '전문가(FC) 연회비',       label: '전문가',  type: 'annual',  credit: 40,  sheet: '금융집짓기_구독DB' },
-  // 구버전 호환 (기존 주문번호)
-  'SINGLE':        { name: '단일상담 1회',            label: '단일',    type: 'single',  credit: 10,  sheet: '금융집짓기_구독DB' },
-  'MONTH':         { name: '월정기구독',              label: '실버',    type: 'monthly', credit: 20,  sheet: '금융집짓기_구독DB' },
-  'YEAR':          { name: '연회비구독',              label: '실버',    type: 'annual',  credit: 20,  sheet: '금융집짓기_구독DB' },
+  'EXPERT_MONTH':  { name: '전문가(FC) 월정기구독',   label: '전문가',  type: 'monthly', credit: 40, amount: 29900,  sheet: '금융집짓기_구독DB' },
+  'EXPERT_YEAR':   { name: '전문가(FC) 연회비',       label: '전문가',  type: 'annual',  credit: 40, amount: 299000, sheet: '금융집짓기_구독DB' },
+  // 구버전 호환
+  'SINGLE':        { name: '단일상담 1회',            label: '단일',    type: 'single',  credit: 10, amount: 9900,   sheet: '금융집짓기_구독DB' },
+  'MONTH':         { name: '월정기구독',              label: '실버',    type: 'monthly', credit: 20, amount: 9900,   sheet: '금융집짓기_구독DB' },
+  'YEAR':          { name: '연회비구독',              label: '실버',    type: 'annual',  credit: 20, amount: 199000, sheet: '금융집짓기_구독DB' },
+  // planParam 직접 참조 (AUTH 방식)
+  'silver-month':  { name: '실버 월정기구독',         label: '실버',    type: 'monthly', credit: 20, amount: 9900,   sheet: '금융집짓기_구독DB' },
+  'silver-year':   { name: '실버 연회비',             label: '실버',    type: 'annual',  credit: 20, amount: 99000,  sheet: '금융집짓기_구독DB' },
+  'gold-month':    { name: '골드 월정기구독',         label: '골드',    type: 'monthly', credit: 40, amount: 19900,  sheet: '금융집짓기_구독DB' },
+  'gold-year':     { name: '골드 연회비',             label: '골드',    type: 'annual',  credit: 40, amount: 199000, sheet: '금융집짓기_구독DB' },
+  'expert-month':  { name: '전문가 월정기구독',       label: '전문가',  type: 'monthly', credit: 40, amount: 29900,  sheet: '금융집짓기_구독DB' },
+  'expert-year':   { name: '전문가 연회비',           label: '전문가',  type: 'annual',  credit: 40, amount: 299000, sheet: '금융집짓기_구독DB' },
 };
 
 // 주문번호에서 플랜 정보 추출
@@ -63,8 +70,9 @@ module.exports = async function handler(req, res) {
   const cardName   = data.PCD_PAY_CARDNAME || '';
   const cardNum    = data.PCD_PAY_CARDNUM  || '';
   const authDate   = data.PCD_PAY_TIME     || '';
-  // ★ 빌링키 (월정기구독 자동 청구에 사용)
+  // ★ 빌링키 (AUTH 방식 카드등록 후 발급)
   const payerId    = data.PCD_PAYER_ID     || '';
+  const payWork    = data.PCD_PAY_WORK     || query.work || '';
   // 고객 정보
   const payerName  = query.payer_name  || data.PCD_PAYER_NAME  || '';
   const payerEmail = query.payer_email || data.PCD_PAYER_EMAIL || '';
@@ -72,7 +80,63 @@ module.exports = async function handler(req, res) {
   const payerUid   = query.uid         || '';
   const planParam  = query.plan        || '';
 
-  console.log('[페이플 웹훅 수신]', { rst, oid, total, payerName, payerEmail, payerPhone, payerId: payerId ? '***발급됨***' : '없음' });
+  console.log('[페이플 웹훅 수신]', { rst, oid, total, payWork, payerName, payerEmail, payerPhone, payerId: payerId ? '***발급됨***' : '없음' });
+
+  // ★ AUTH 방식: 카드등록 완료 (빌링키만 발급, 실결제 없음)
+  // rst='success', PCD_PAY_OID는 비어있을 수 있음
+  const isAuthMode = (payWork === 'AUTH' || (!oid && payerId));
+
+  if (isAuthMode && payerId) {
+    console.log('[AUTH] 카드등록 완료 — 빌링키 발급:', payerId ? '***' : '없음');
+
+    // 빌링키 구글시트 저장
+    const planInfo = getPlanInfo(planParam || 'silver-month');
+    const now = new Date();
+    const today = now.toLocaleString('ko-KR', { timeZone: 'Asia/Seoul' });
+    const nextBill = new Date(now);
+    nextBill.setMonth(nextBill.getMonth() + 1);
+    nextBill.setDate(15);
+    const nextBillStr = nextBill.toLocaleDateString('ko-KR', { timeZone: 'Asia/Seoul', year: 'numeric', month: '2-digit', day: '2-digit' });
+
+    try {
+      const { google } = require('googleapis');
+      const saJson = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT || '{}');
+      const auth   = new google.auth.GoogleAuth({ credentials: saJson, scopes: ['https://www.googleapis.com/auth/spreadsheets'] });
+      const sheets = google.sheets({ version: 'v4', auth });
+
+      // 빌링키_구독DB 저장
+      await sheets.spreadsheets.values.append({
+        spreadsheetId: process.env.SPREADSHEET_ID,
+        range: '빌링키_구독DB!A:J',
+        valueInputOption: 'USER_ENTERED',
+        requestBody: { values: [[
+          today, payerName, payerPhone, payerEmail,
+          payerId, planInfo.name, planInfo.amount || '',
+          '활성', nextBillStr, 'AUTH_' + Date.now()
+        ]] }
+      });
+
+      // 금융집짓기_구독DB에도 기록
+      await sheets.spreadsheets.values.append({
+        spreadsheetId: process.env.SPREADSHEET_ID,
+        range: `${planInfo.sheet}!A:M`,
+        valueInputOption: 'USER_ENTERED',
+        requestBody: { values: [[
+          today, 'AUTH_' + Date.now(), planInfo.name + ' (카드등록)',
+          '0', payerName, payerPhone, payerEmail,
+          '', '', '', 'auth_success', payerId, nextBillStr
+        ]] }
+      });
+      console.log('[AUTH] 구글시트 저장 완료');
+    } catch(e) {
+      console.error('[AUTH] 구글시트 저장 실패:', e.message);
+    }
+
+    // 앱으로 복귀 (결제 성공으로 처리)
+    return res.redirect(302,
+      `${APP_URL}?pay_result=success&plan=${encodeURIComponent(planInfo.label)}&auth=1`
+    );
+  }
 
   // 결제 실패
   if (rst !== 'success') {
@@ -80,6 +144,11 @@ module.exports = async function handler(req, res) {
     return res.redirect(302,
       `${APP_URL}?pay_result=fail&msg=${encodeURIComponent(msg)}`
     );
+  }
+
+  // 일반 결제 (단일/연회비)
+  if (!oid) {
+    return res.status(200).json({ result: 'ignored', reason: 'no_oid' });
   }
 
   // 플랜 정보 추출
