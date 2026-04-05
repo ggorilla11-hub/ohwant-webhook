@@ -1,9 +1,10 @@
 // ohwant-webhook/api/payple.js
-// 페이플 결제 완료 웹훅 v2.0
+// 페이플 결제 완료 웹훅 v2.1
 // ① 구글시트 자동 기록 (브론즈/실버/골드/전문가 4개 플랜)
 // ② 빌링키(PCD_PAYER_ID) 저장 (월정기구독 자동 청구용)
 // ③ 고객 감사 이메일 발송
 // ④ 앱 화면으로 복귀
+// ★ v2.1 추가: 강의 결제 완료 감사 카톡+이메일 (PCD_PAY_GOODS에 "강의" 포함 시)
 //
 // Vercel 환경변수 (Settings > Environment Variables):
 //   SPREADSHEET_ID         : 구글시트 ID
@@ -15,6 +16,11 @@ const { google } = require('googleapis');
 const nodemailer  = require('nodemailer');
 
 const APP_URL = 'https://financial-house-building.vercel.app';
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// make.com 웹훅 (유료결제 완료 → 카톡+이메일)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+const MAKE_WEBHOOK_URL = 'https://hook.eu1.make.com/gqxc1xxpz1x61pxfk996ollf00r0oiu9';
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // 플랜 매핑 (주문번호 prefix → 플랜 정보)
@@ -46,9 +52,78 @@ const PLAN_MAP = {
 
 // 주문번호에서 플랜 정보 추출
 function getPlanInfo(oid) {
-  // FH_GOLD_MONTH_1234567 → GOLD_MONTH
   const match = oid.replace(/^FH_/, '').replace(/_\d+$/, '');
   return PLAN_MAP[match] || PLAN_MAP['SINGLE'];
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// ★ 강의 결제 감사 처리 (make.com → 카톡+이메일)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+async function handleLecturePayment(data, payerName, payerPhone, payerEmail, total) {
+  const goods = data.PCD_PAY_GOODS || '';
+  const oid   = data.PCD_PAY_OID   || '';
+
+  // 강의명 판별
+  const isGenLecture = goods.includes('일반인강의') || goods.includes('일반인 강의');
+  const isProLecture = goods.includes('전문가강의') || goods.includes('전문가 강의');
+  const planLabel    = isGenLecture ? '일반인강의(55만원)' : isProLecture ? '전문가강의(110만원)' : goods;
+
+  console.log('[강의결제] 감사 처리 시작:', { goods, planLabel, payerName, payerPhone, payerEmail });
+
+  // make.com 웹훅 → 카톡 알림 + 감사 이메일 자동 발송
+  try {
+    const resp = await fetch(MAKE_WEBHOOK_URL, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        type:              'lecture_payment',   // make.com에서 강의 결제건 식별용
+        name:              payerName,
+        phone:             payerPhone,
+        email:             payerEmail,
+        plan:              planLabel,
+        amount:            total,
+        orderId:           oid,
+        sendThankYouKakao: true,
+        sendThankYouEmail: true,
+        timestamp:         new Date().toISOString()
+      })
+    });
+    console.log('[강의결제] make.com 웹훅 전송 완료:', resp.status);
+  } catch (e) {
+    console.error('[강의결제] make.com 웹훅 실패:', e.message);
+  }
+
+  // 구글시트 강의DB 기록
+  try {
+    const saJson = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT || '{}');
+    const auth   = new google.auth.GoogleAuth({ credentials: saJson, scopes: ['https://www.googleapis.com/auth/spreadsheets'] });
+    const sheets = google.sheets({ version: 'v4', auth });
+    const today  = new Date().toLocaleString('ko-KR', { timeZone: 'Asia/Seoul' });
+
+    // 강의 결제 완료 → 해당 시트 상태 업데이트 (일반인강의DB / 전문가강의DB)
+    const sheetName = isGenLecture ? '일반인강의DB' : isProLecture ? '전문가강의DB' : '일반인강의DB';
+
+    await sheets.spreadsheets.values.append({
+      spreadsheetId: process.env.SPREADSHEET_ID,
+      range: `${sheetName}!A:H`,
+      valueInputOption: 'USER_ENTERED',
+      requestBody: {
+        values: [[
+          today,       // A: 결제완료일시
+          payerName,   // B: 이름
+          payerPhone,  // C: 연락처
+          payerEmail,  // D: 이메일
+          planLabel,   // E: 서비스명
+          total,       // F: 금액
+          '결제완료',   // G: 상태
+          oid          // H: 주문번호
+        ]]
+      }
+    });
+    console.log('[강의결제] 구글시트 기록 완료:', sheetName);
+  } catch (e) {
+    console.error('[강의결제] 구글시트 기록 실패:', e.message);
+  }
 }
 
 module.exports = async function handler(req, res) {
@@ -70,6 +145,7 @@ module.exports = async function handler(req, res) {
   const cardName   = data.PCD_PAY_CARDNAME || '';
   const cardNum    = data.PCD_PAY_CARDNUM  || '';
   const authDate   = data.PCD_PAY_TIME     || '';
+  const payGoods   = data.PCD_PAY_GOODS    || '';  // ★ 상품명 (강의 판별용)
   // ★ 빌링키 (AUTH 방식 카드등록 후 발급)
   const payerId    = data.PCD_PAYER_ID     || '';
   const payWork    = data.PCD_PAY_WORK     || query.work || '';
@@ -80,16 +156,17 @@ module.exports = async function handler(req, res) {
   const payerUid   = query.uid         || '';
   const planParam  = query.plan        || '';
 
-  console.log('[페이플 웹훅 수신]', { rst, oid, total, payWork, payerName, payerEmail, payerPhone, payerId: payerId ? '***발급됨***' : '없음' });
+  console.log('[페이플 웹훅 수신]', { rst, oid, total, payWork, payGoods, payerName, payerEmail, payerPhone, payerId: payerId ? '***발급됨***' : '없음' });
+
+  // ★ 강의 결제 감지 (PCD_PAY_GOODS에 "강의" 포함)
+  const isLecturePayment = payGoods.includes('강의') || oid.includes('LECTURE') || planParam.includes('강의');
 
   // ★ AUTH 방식: 카드등록 완료 (빌링키만 발급, 실결제 없음)
-  // rst='success', PCD_PAY_OID는 비어있을 수 있음
   const isAuthMode = (payWork === 'AUTH' || (!oid && payerId));
 
   if (isAuthMode && payerId) {
     console.log('[AUTH] 카드등록 완료 — 빌링키 발급:', payerId ? '***' : '없음');
 
-    // 빌링키 구글시트 저장
     const planInfo = getPlanInfo(planParam || 'silver-month');
     const now = new Date();
     const today = now.toLocaleString('ko-KR', { timeZone: 'Asia/Seoul' });
@@ -99,12 +176,10 @@ module.exports = async function handler(req, res) {
     const nextBillStr = nextBill.toLocaleDateString('ko-KR', { timeZone: 'Asia/Seoul', year: 'numeric', month: '2-digit', day: '2-digit' });
 
     try {
-      const { google } = require('googleapis');
       const saJson = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT || '{}');
       const auth   = new google.auth.GoogleAuth({ credentials: saJson, scopes: ['https://www.googleapis.com/auth/spreadsheets'] });
       const sheets = google.sheets({ version: 'v4', auth });
 
-      // 빌링키_구독DB 저장
       await sheets.spreadsheets.values.append({
         spreadsheetId: process.env.SPREADSHEET_ID,
         range: '빌링키_구독DB!A:J',
@@ -116,7 +191,6 @@ module.exports = async function handler(req, res) {
         ]] }
       });
 
-      // 금융집짓기_구독DB에도 기록
       await sheets.spreadsheets.values.append({
         spreadsheetId: process.env.SPREADSHEET_ID,
         range: `${planInfo.sheet}!A:M`,
@@ -132,7 +206,6 @@ module.exports = async function handler(req, res) {
       console.error('[AUTH] 구글시트 저장 실패:', e.message);
     }
 
-    // 앱으로 복귀 (결제 성공으로 처리)
     return res.redirect(302,
       `${APP_URL}?pay_result=success&plan=${encodeURIComponent(planInfo.label)}&auth=1`
     );
@@ -144,6 +217,16 @@ module.exports = async function handler(req, res) {
     return res.redirect(302,
       `${APP_URL}?pay_result=fail&msg=${encodeURIComponent(msg)}`
     );
+  }
+
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  // ★ 강의 결제 완료 처리 (별도 분기)
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  if (isLecturePayment) {
+    console.log('[강의결제] 강의 결제 완료 감지:', payGoods);
+    await handleLecturePayment(data, payerName, payerPhone, payerEmail, total);
+    // 강의 결제는 앱으로 복귀하지 않고 200 응답 (페이플 링크 방식)
+    return res.status(200).json({ result: 'ok', type: 'lecture', plan: payGoods });
   }
 
   // 일반 결제 (단일/연회비)
@@ -161,9 +244,6 @@ module.exports = async function handler(req, res) {
     ? cardNum.replace(/(\d{4})(\d+)(\d{4})/, '$1-****-****-$3')
     : '';
 
-  // ━━━━━━━━━━━━━━━━━━━━
-  // 중복 처리 방지
-  // ━━━━━━━━━━━━━━━━━━━━
   if (!oid) {
     return res.status(200).json({ result: 'ignored', reason: 'no_oid' });
   }
@@ -188,9 +268,7 @@ module.exports = async function handler(req, res) {
     console.log('[중복방지] 확인 실패 (계속 진행):', e.message);
   }
 
-  // ━━━━━━━━━━━━━━━━━━━━
-  // ① 구글시트 기록 (A~M 13컬럼)
-  // ━━━━━━━━━━━━━━━━━━━━
+  // ① 구글시트 기록
   try {
     const saJson = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT || '{}');
     const auth   = new google.auth.GoogleAuth({
@@ -199,7 +277,6 @@ module.exports = async function handler(req, res) {
     });
     const sheets = google.sheets({ version: 'v4', auth });
 
-    // 다음 결제일 계산 (월정기: 다음달 15일)
     const nextBillDate = isMonthly
       ? (() => {
           const d = new Date(now);
@@ -215,30 +292,19 @@ module.exports = async function handler(req, res) {
       valueInputOption: 'USER_ENTERED',
       requestBody: {
         values: [[
-          today,           // A: 결제일시
-          oid,             // B: 주문번호
-          planInfo.name,   // C: 플랜명
-          total,           // D: 결제금액
-          payerName,       // E: 고객명
-          payerPhone,      // F: 전화번호
-          payerEmail,      // G: 이메일
-          cardName,        // H: 카드사
-          maskedCard,      // I: 카드번호(마스킹)
-          authDate,        // J: 승인일시
-          rst,             // K: 결제결과
-          payerId || '-',  // L: 빌링키 (월정기구독)
-          nextBillDate,    // M: 다음 결제일
+          today, oid, planInfo.name, total,
+          payerName, payerPhone, payerEmail,
+          cardName, maskedCard, authDate, rst,
+          payerId || '-', nextBillDate,
         ]],
       },
     });
-    console.log('[구글시트] 기록 완료:', oid, '플랜:', planInfo.name, '빌링키:', payerId ? '있음' : '없음');
+    console.log('[구글시트] 기록 완료:', oid, '플랜:', planInfo.name);
   } catch (e) {
     console.error('[구글시트] 기록 실패:', e.message);
   }
 
-  // ━━━━━━━━━━━━━━━━━━━━
-  // ② 빌링키 별도 시트 저장 (월정기구독 자동 청구용)
-  // ━━━━━━━━━━━━━━━━━━━━
+  // ② 빌링키 별도 시트 저장
   if (isMonthly && payerId) {
     try {
       const saJson = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT || '{}');
@@ -248,7 +314,6 @@ module.exports = async function handler(req, res) {
       });
       const sheets = google.sheets({ version: 'v4', auth });
 
-      // 다음 결제일
       const nextBill = new Date(now);
       nextBill.setMonth(nextBill.getMonth() + 1);
       nextBill.setDate(15);
@@ -260,28 +325,18 @@ module.exports = async function handler(req, res) {
         valueInputOption: 'USER_ENTERED',
         requestBody: {
           values: [[
-            today,           // A: 등록일시
-            payerName,       // B: 고객명
-            payerPhone,      // C: 전화번호
-            payerEmail,      // D: 이메일
-            payerId,         // E: 빌링키 (PCD_PAYER_ID)
-            planInfo.name,   // F: 플랜명
-            total,           // G: 월 결제금액
-            '활성',          // H: 구독상태
-            nextBillStr,     // I: 다음 결제일
-            oid,             // J: 최초 주문번호
+            today, payerName, payerPhone, payerEmail,
+            payerId, planInfo.name, total, '활성', nextBillStr, oid,
           ]],
         },
       });
-      console.log('[빌링키DB] 저장 완료:', payerName, payerId.slice(0,8) + '...');
+      console.log('[빌링키DB] 저장 완료');
     } catch (e) {
       console.error('[빌링키DB] 저장 실패:', e.message);
     }
   }
 
-  // ━━━━━━━━━━━━━━━━━━━━
   // ③ 감사 이메일 발송
-  // ━━━━━━━━━━━━━━━━━━━━
   if (payerEmail) {
     try {
       const transporter = nodemailer.createTransport({
@@ -298,8 +353,6 @@ module.exports = async function handler(req, res) {
         timeZone: 'Asia/Seoul',
         year: 'numeric', month: 'long', day: 'numeric',
       });
-
-      // 플랜별 크레딧 안내
       const creditLabel = planInfo.credit + '분';
       const typeLabel   = isMonthly ? '월정기구독 (매월 15일 자동 결제)'
                         : planInfo.type === 'annual' ? '연회비 구독'
