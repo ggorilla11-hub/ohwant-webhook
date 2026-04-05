@@ -20,7 +20,7 @@ const APP_URL = 'https://financial-house-building.vercel.app';
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // make.com 웹훅 (유료결제 완료 → 카톡+이메일)
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-const MAKE_WEBHOOK_URL = 'https://hook.eu1.make.com/gqxc1xxpz1x61pxfk996ollf00r0oiu9';
+const MAKE_WEBHOOK_URL = 'https://hook.eu1.make.com/ap0haywvwzdanu3x0yp6ewvh76x3khuk';
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // 플랜 매핑 (주문번호 prefix → 플랜 정보)
