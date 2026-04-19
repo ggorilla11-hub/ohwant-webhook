@@ -46,13 +46,22 @@ const PLAN_MAP = {
   'silver-year':   { name: '실버 연회비',             label: '실버',    type: 'annual',  credit: 20, amount: 99000,  sheet: '금융집짓기_구독DB' },
   'gold-month':    { name: '골드 월정기구독',         label: '골드',    type: 'monthly', credit: 40, amount: 19900,  sheet: '금융집짓기_구독DB' },
   'gold-year':     { name: '골드 연회비',             label: '골드',    type: 'annual',  credit: 40, amount: 199000, sheet: '금융집짓기_구독DB' },
-  'expert-month':  { name: '전문가 월정기구독',       label: '전문가',  type: 'monthly', credit: 40, amount: 29900,  sheet: '금융집짓기_구독DB' },
-  'expert-year':   { name: '전문가 연회비',           label: '전문가',  type: 'annual',  credit: 40, amount: 299000, sheet: '금융집짓기_구독DB' },
+  'expert-month':  { name: 'FC브론즈 월정기구독',     label: 'FC브론즈', type: 'monthly', credit: 60, amount: 33000,  sheet: '금융집짓기_구독DB' },
+  'expert-year':   { name: 'FC브론즈 연회비',         label: 'FC브론즈', type: 'annual',  credit: 60, amount: 330000, sheet: '금융집짓기_구독DB' },
+  'expert-silver': { name: 'FC실버 월정기구독',       label: 'FC실버',  type: 'monthly', credit: 60, amount: 55000,  sheet: '금융집짓기_구독DB' },
+  'expert-gold':   { name: 'FC골드 월정기구독',       label: 'FC골드',  type: 'monthly', credit: 60, amount: 99000,  sheet: '금융집짓기_구독DB' },
 };
 
 // 주문번호에서 플랜 정보 추출
 function getPlanInfo(oid) {
   const match = oid.replace(/^FH_/, '').replace(/_\d+$/, '');
+  // ★ FC 플랜 OID 매핑
+  const fcMap = {
+    'FC_BRONZE_MONTH': 'expert-month',
+    'FC_SILVER_MONTH': 'expert-silver',
+    'FC_GOLD_MONTH':   'expert-gold',
+  };
+  if (fcMap[match]) return PLAN_MAP[fcMap[match]];
   return PLAN_MAP[match] || PLAN_MAP['SINGLE'];
 }
 
