@@ -215,8 +215,42 @@ module.exports = async function handler(req, res) {
       console.error('[AUTH] 구글시트 저장 실패:', e.message);
     }
 
+    // ★ 빌링키로 첫 실결제 API 호출
+    let billingSuccess = false;
+    const billingAmount = planInfo.amount || 9900;
+    try {
+      console.log('[AUTH→실결제] 빌링키로', billingAmount, '원 결제 시도');
+      const billingRes = await fetch('https://cpay.payple.kr/php/SimplePayCardAct.php?ACT_=PAYM', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Referer': APP_URL },
+        body: JSON.stringify({
+          PCD_CST_ID: data.PCD_CST_ID || '',
+          PCD_CUST_KEY: data.PCD_CUST_KEY || '',
+          PCD_AUTH_KEY: data.PCD_AUTH_KEY || '',
+          PCD_PAY_TYPE: 'card',
+          PCD_PAYER_ID: payerId,
+          PCD_PAY_GOODS: data.PCD_PAY_GOODS || planInfo.name,
+          PCD_PAY_TOTAL: String(billingAmount),
+          PCD_PAY_OID: 'BILL_' + (planParam || 'month') + '_' + Date.now(),
+          PCD_SIMPLE_FLAG: 'Y',
+          PCD_PAYER_NAME: payerName,
+          PCD_PAYER_HP: payerPhone,
+          PCD_PAYER_EMAIL: payerEmail
+        })
+      });
+      const billingData = await billingRes.json();
+      console.log('[AUTH→실결제] 응답:', billingData.PCD_PAY_RST, billingData.PCD_PAY_MSG || '');
+      if (billingData.PCD_PAY_RST === 'success') {
+        billingSuccess = true;
+        console.log('[AUTH→실결제] ✅ 성공!', billingAmount, '원');
+      } else {
+        console.error('[AUTH→실결제] ❌ 실패:', billingData.PCD_PAY_MSG || '알 수 없는 오류');
+      }
+    } catch(billingErr) {
+      console.error('[AUTH→실결제] 에러:', billingErr.message);
+    }
     return res.redirect(302,
-      `${APP_URL}?pay_result=success&plan=${encodeURIComponent(planInfo.label)}&auth=1`
+      `${APP_URL}?pay_result=${billingSuccess ? 'success' : 'fail'}&plan=${encodeURIComponent(planInfo.label)}&auth=1`
     );
   }
 
