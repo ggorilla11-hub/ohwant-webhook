@@ -14,6 +14,30 @@
 
 const { google } = require('googleapis');
 const nodemailer  = require('nodemailer');
+const admin       = require('firebase-admin');
+
+// ── Firebase Admin 초기화 (Firestore paid_users 기록용) ──
+// Vercel 환경변수 FIREBASE_SERVICE_ACCOUNT = moneya-72fe6 서비스계정 키 JSON 전체
+if (!admin.apps.length && process.env.FIREBASE_SERVICE_ACCOUNT) {
+  try {
+    admin.initializeApp({ credential: admin.cert(JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT)) });
+  } catch (e) { console.error('[firebase-admin 초기화 실패]', e.message); }
+}
+
+// AI재무진단 결제자 → Firestore paid_users 자동 기록 (DESIRE 게이트용)
+async function recordPaidUser(email, oid, goods) {
+  if (!email || !admin.apps.length) { console.log('[paid_users] 스킵(이메일 또는 admin 없음)'); return; }
+  try {
+    await admin.firestore().collection('paid_users').doc(email).set({
+      email:  email,
+      paidAt: new Date().toISOString(),
+      oid:    oid || '',
+      goods:  goods || '',
+      memo:   'AI재무진단'
+    }, { merge: true });
+    console.log('[paid_users] 결제자 기록 완료:', email);
+  } catch (e) { console.error('[paid_users] 기록 실패:', e.message); }
+}
 
 const APP_URL = 'https://financial-house-building.vercel.app';
 
@@ -171,7 +195,7 @@ module.exports = async function handler(req, res) {
   const isLecturePayment = payGoods.includes('강의') || oid.includes('LECTURE') || planParam.includes('강의');
 
   // ★ AUTH 방식: 카드등록 완료 (빌링키만 발급, 실결제 없음)
-  const isAuthMode = (payWork === 'AUTH' || (!oid && payerId));
+  const isAuthMode = (payWork === 'AUTH');  // ★ 단건 오판 방지: 명시적 AUTH(구독)만 정기 처리. 기존 (!oid && payerId)가 링크/앱카드 단건을 정기로 잘못 처리하던 원인 → 제거
 
   if (isAuthMode && payerId) {
     console.log('[AUTH] 카드등록 완료 — 빌링키 발급:', payerId ? '***' : '없음');
@@ -260,6 +284,13 @@ module.exports = async function handler(req, res) {
     return res.redirect(302,
       `${APP_URL}?pay_result=fail&msg=${encodeURIComponent(msg)}`
     );
+  }
+
+  // ★ AI재무진단 단건결제 완료 → DESIRE paid_users 자동 기록 후 종료
+  if (payGoods.includes('AI재무진단')) {
+    console.log('[AI재무진단] 결제 완료 감지:', payerEmail, oid);
+    await recordPaidUser(payerEmail, oid, payGoods);
+    return res.status(200).json({ result: 'ok', type: 'ai-consult', email: payerEmail || '' });
   }
 
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
