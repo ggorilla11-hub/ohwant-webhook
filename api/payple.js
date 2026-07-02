@@ -20,7 +20,7 @@ const admin       = require('firebase-admin');
 // Vercel 환경변수 FIREBASE_SERVICE_ACCOUNT = moneya-72fe6 서비스계정 키 JSON 전체
 if (!admin.apps.length && process.env.FIREBASE_SERVICE_ACCOUNT) {
   try {
-    admin.initializeApp({ credential: admin.cert(JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT)) });
+    admin.initializeApp({ credential: admin.credential.cert(JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT)) });
   } catch (e) { console.error('[firebase-admin 초기화 실패]', e.message); }
 }
 
@@ -290,7 +290,8 @@ module.exports = async function handler(req, res) {
   if (payGoods.includes('AI재무진단')) {
     console.log('[AI재무진단] 결제 완료 감지:', payerEmail, oid);
     await recordPaidUser(payerEmail, oid, payGoods);
-    return res.status(200).json({ result: 'ok', type: 'ai-consult', email: payerEmail || '' });
+    // 결제 완료 → DESIRE 로드맵으로 이동 (브라우저가 RST_URL로 왔을 때 JSON 대신 리다이렉트)
+    return res.redirect(302, 'https://ohwant-class.netlify.app/desire.html?pay=success');
   }
 
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
