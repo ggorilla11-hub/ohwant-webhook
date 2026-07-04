@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>AI금융집짓기 프리미엄 구독</title>
+<!-- Payple 정기결제 SDK (jQuery + cpay.payple.kr) -->
+<script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+<script src="https://cpay.payple.kr/js/cpay.payple.1.0.1.js"></script>
+<style>
+  :root{--teal:#0F6E56;--teal2:#5DCAA5;--teal-deep:#0A5343;--navy:#0B1B32;--ink:#0E1826;--sub:#6B7788;--line:#EAEDF2;--pale:#E6F7F1;}
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
+  body{font-family:'Apple SD Gothic Neo','Malgun Gothic',-apple-system,system-ui,sans-serif;
+    background:#F5F7FA;color:var(--ink);line-height:1.6;padding:0 0 40px;}
+  .top{background:linear-gradient(140deg,var(--teal),var(--teal-deep));color:#fff;padding:34px 22px 26px;}
+  .top .badge{display:inline-block;background:rgba(255,255,255,.16);padding:5px 12px;border-radius:20px;font-size:12px;font-weight:700;}
+  .top h1{font-size:22px;font-weight:800;margin:12px 0 4px;letter-spacing:-.4px;}
+  .top .price{font-size:15px;color:#d7f5ec;}
+  .top .price b{font-size:26px;color:#fff;}
+  .wrap{max-width:460px;margin:0 auto;padding:18px 16px;}
+  .card{background:#fff;border:1px solid var(--line);border-radius:16px;padding:18px;margin-bottom:14px;box-shadow:0 1px 3px rgba(11,27,50,.05);}
+  .card h2{font-size:14px;font-weight:800;margin-bottom:10px;color:var(--ink);}
+  .benefit{display:flex;gap:10px;align-items:flex-start;margin:8px 0;font-size:14px;}
+  .benefit .ic{color:var(--teal);font-weight:800;flex-shrink:0;}
+  .notice{background:#FBFCFE;border:1px solid var(--line);border-radius:12px;padding:14px;font-size:12.5px;color:#55606e;line-height:1.75;}
+  .notice b{color:var(--ink);}
+  .notice .row{display:flex;gap:8px;margin:5px 0;}
+  .notice .k{color:var(--teal-deep);font-weight:700;flex-shrink:0;min-width:64px;}
+  .cta{position:sticky;bottom:0;background:linear-gradient(180deg,rgba(245,247,250,0),#F5F7FA 30%);padding:14px 16px 8px;}
+  .cta button{width:100%;border:none;border-radius:16px;padding:16px;font-family:inherit;font-size:16px;font-weight:800;
+    color:#fff;background:linear-gradient(135deg,var(--teal2),var(--teal));box-shadow:0 8px 20px rgba(15,110,86,.3);cursor:pointer;transition:.14s;}
+  .cta button:active{transform:scale(.98);}
+  .cta button:disabled{opacity:.5;}
+  .cta .agree{font-size:11.5px;color:var(--sub);text-align:center;margin-bottom:10px;line-height:1.5;}
+  .seller{font-size:11px;color:#9aa4b1;text-align:center;margin-top:16px;line-height:1.7;}
+  .err{display:none;background:#FDE7E3;color:#B23A28;border-radius:10px;padding:12px;font-size:13px;margin-bottom:12px;}
+</style>
+</head>
+<body>
+  <div class="top">
+    <span class="badge">AI금융집짓기 프리미엄</span>
+    <h1>정밀 진단, 매달 이어가기</h1>
+    <div class="price"><b>월 9,900원</b> · 언제든 해지 가능</div>
+  </div>
+
+  <div class="wrap">
+    <div id="err" class="err"></div>
+
+    <div class="card">
+      <h2>프리미엄으로 열리는 것</h2>
+      <div class="benefit"><span class="ic">✓</span><div>오상열 CFP 방식 <b>정밀 재무 진단</b> 리포트</div></div>
+      <div class="benefit"><span class="ic">✓</span><div>방별 진단 · 맞춤 처방 · 실천 코칭</div></div>
+      <div class="benefit"><span class="ic">✓</span><div>금융집·신호등에 진단 결과 반영</div></div>
+    </div>
+
+    <div class="card">
+      <h2>결제 전 꼭 확인</h2>
+      <div class="notice">
+        <div class="row"><span class="k">상품</span><span>AI금융집짓기 프리미엄(정밀 진단) 이용권</span></div>
+        <div class="row"><span class="k">이용료</span><span><b>월 9,900원</b> (부가세 포함)</span></div>
+        <div class="row"><span class="k">결제방식</span><span>등록한 카드로 <b>매월 자동 정기결제</b></span></div>
+        <div class="row"><span class="k">해지방법</span><span>앱 내 설정 또는 오원트금융연구소로 요청하면 <b>언제든 해지</b>(다음 결제일부터 청구 중단)</span></div>
+        <div class="row"><span class="k">환불</span><span>관련 법령 및 판매자 정책에 따름</span></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="cta">
+    <div class="agree">위 결제 내용(월 9,900원 정기결제)을 확인했으며 이에 동의합니다.</div>
+    <button id="payBtn" onclick="subscribe()">카드 등록하고 구독 시작</button>
+  </div>
+
+  <div class="wrap">
+    <div class="seller">
+      오원트금융연구소 · 대표 오상열 · 010-5424-5332 · ggorilla11@gmail.com<br>
+      결제대행: 페이플(Payple)
+    </div>
+  </div>
+
+<script>
+  // 앱에서 넘어온 uid (URL 파라미터) — 결제를 이 사용자와 매칭
+  var uid = new URLSearchParams(location.search).get('uid') || '';
+  var WEBHOOK = 'https://ohwant-webhook.vercel.app';
+
+  function showErr(m){ var e=document.getElementById('err'); e.textContent=m; e.style.display='block'; }
+
+  function subscribe(){
+    if(!uid){ showErr('로그인 정보가 없어요. 앱에서 다시 시도해 주세요.'); return; }
+    var btn=document.getElementById('payBtn'); btn.disabled=true; btn.textContent='결제창 여는 중…';
+
+    // 1) 서버 인증(빌링 AUTH) — uid 를 OID·PCD_PAYER_NO 에 실음
+    fetch(WEBHOOK+'/api/aimoneya-auth', {
+      method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({uid:uid})
+    }).then(function(r){return r.json();}).then(function(d){
+      if(d.result!=='success'){ showErr(d.message||'결제 인증에 실패했어요.'); reset(); return; }
+
+      // 2) Payple 카드등록 창 호출 (서버 인증정보 + 결제 파라미터)
+      var obj = Object.assign({}, d.auth, {
+        PCD_PAY_TYPE:'card',
+        PCD_PAY_WORK:'AUTH',
+        PCD_CARD_VER:'01',
+        PCD_PAYER_NO: uid,                 // ★ 커스텀 회원식별
+        PCD_PAY_GOODS:'AI금융집짓기 프리미엄 구독',
+        PCD_PAY_TOTAL: 9900,
+        PCD_PAY_OID: d.order_id,
+        PCD_REGULER_FLAG:'Y',
+        PCD_SIMPLE_FLAG:'Y',
+        PCD_RST_URL: WEBHOOK+'/api/payple',  // ★ 완료 통지 → 웹훅이 빌링키 저장 + 딥링크 복귀
+        callbackFunction: onResult
+      });
+      // Payple SDK 호출 (cpay.payple.kr)
+      try { PaypleCpayAuthCheck(obj); }
+      catch(e){ showErr('결제창을 열 수 없어요: '+e.message); reset(); }
+    }).catch(function(e){ showErr('네트워크 오류: '+e.message); reset(); });
+  }
+
+  // 3) 결제 결과 콜백 — 성공 시 앱으로 딥링크 복귀
+  //    (웹훅 /api/payple 도 서버측에서 aimoneya://sub/done 로 302 복귀시킴 — 이중 안전)
+  function onResult(res){
+    if(res && res.PCD_PAY_RST==='success'){ location.href='aimoneya://sub/done?ok=1'; }
+    else { showErr((res&&res.PCD_PAY_MSG)||'결제가 완료되지 않았어요.'); reset(); }
+  }
+  function reset(){ var b=document.getElementById('payBtn'); b.disabled=false; b.textContent='카드 등록하고 구독 시작'; }
+</script>
+</body>
+</html>
