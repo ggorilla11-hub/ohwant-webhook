@@ -41,13 +41,17 @@ module.exports = async function handler(req, res) {
       PCD_SIMPLE_FLAG: 'Y',
     });
 
+    // 과거 성공 결제가 등록·사용한 Referer(경로 /api/payple 포함)를 기본값으로.
+    //   AUTH0004는 "미등록"이 아니라 "Referer가 등록값과 정확히 불일치"일 때 남 → 형식 일치가 핵심.
+    //   ?testref=<url> 로 형식(https·슬래시·경로) 실험 가능(진단용, 확정 후 제거).
+    const DEFAULT_REFERER = 'https://ohwant-webhook.vercel.app/api/payple';
+    const referer = (req.query && req.query.testref) || DEFAULT_REFERER;
+
     const authResponse = await fetch('https://cpay.payple.kr/php/auth.php', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded',
-        // ⚠️ 이 도메인(ohwant-webhook.vercel.app)을 Payple 파트너 관리자에 등록해야 AUTH0004가 풀린다.
-        //    (테스트로 옛 등록도메인 재사용도 시도했으나 AUTH0004 지속 → 정식 등록 필요)
-        'Referer': 'https://ohwant-webhook.vercel.app',
+        'Referer': referer,
       },
       body: params.toString(),
     });
@@ -63,9 +67,9 @@ module.exports = async function handler(req, res) {
 
     if (authData.result === 'success') {
       // 클라이언트(subscribe.html)가 Payple JS에 넘길 인증정보 전체 + 주문번호
-      return res.status(200).json({ result: 'success', order_id, uid, auth: authData });
+      return res.status(200).json({ result: 'success', order_id, uid, referer_used: referer, auth: authData });
     }
-    return res.status(200).json({ result: 'fail', message: authData.PCD_PAY_MSG || authData.message || '인증 실패', raw: authData });
+    return res.status(200).json({ result: 'fail', message: authData.PCD_PAY_MSG || authData.message || '인증 실패', referer_used: referer, raw: authData });
 
   } catch (error) {
     console.error('[aimoneya-auth 에러]', error.message);
