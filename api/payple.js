@@ -246,39 +246,47 @@ module.exports = async function handler(req, res) {
   // ══════════════════════════════════════════════════════════════
   const AIMONEYA_OID_PREFIX = 'FH_AIMONEYA_SUB_';
   const isAiMoneyaSub = oid.startsWith(AIMONEYA_OID_PREFIX);
-  if (isAiMoneyaSub && isAuthMode && payerId) {
+  // ★ OID prefix만으로 항상 처리(브라우저 콜백이 PCD_PAY_WORK/PCD_PAYER_ID를 항상 담지 않아도 기록 누락 방지).
+  if (isAiMoneyaSub) {
     // uid 복원: PCD_PAYER_NO(커스텀) → query.uid → OID에서 추출
     const uid = data.PCD_PAYER_NO || payerUid ||
                 (oid.match(/^FH_AIMONEYA_SUB_(.+?)_\d+$/) || [])[1] || '';
-    console.log('[ai-moneya 구독] AUTH 완료, 첫 결제 시도 uid=', uid);
+    // 카드등록/결제 성공 판정: RST success 또는 빌링키 발급이면 성공으로 본다.
+    const regOk = (rst === 'success' || data.PCD_PAY_RST === 'success' || !!payerId);
+    console.log('[ai-moneya 구독] 콜백:', { uid, payWork, rst, payerId: payerId ? '있음' : '없음', regOk });
 
-    // 첫 실결제 9,900원 (빌링키). 옛 상품 로직과 독립.
-    let ok = false;
-    try {
-      const r = await fetch('https://cpay.payple.kr/php/SimplePayCardAct.php?ACT_=PAYM', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Referer': WEBHOOK_URL },
-        body: JSON.stringify({
-          PCD_CST_ID: data.PCD_CST_ID || '', PCD_CUST_KEY: data.PCD_CUST_KEY || '',
-          PCD_AUTH_KEY: data.PCD_AUTH_KEY || '', PCD_PAY_TYPE: 'card',
-          PCD_PAYER_ID: payerId, PCD_PAY_GOODS: 'AI금융집짓기 프리미엄 구독',
-          PCD_PAY_TOTAL: '9900', PCD_PAY_OID: 'BILL_AIMONEYA_' + Date.now(),
-          PCD_SIMPLE_FLAG: 'Y', PCD_PAYER_NO: uid,
-          PCD_PAYER_NAME: payerName, PCD_PAYER_HP: payerPhone, PCD_PAYER_EMAIL: payerEmail,
-        })
-      });
-      const j = await r.json();
-      ok = (j.PCD_PAY_RST === 'success');
-      console.log('[ai-moneya 구독] 첫 결제 응답:', j.PCD_PAY_RST, j.PCD_PAY_MSG || '');
-    } catch (e) { console.error('[ai-moneya 구독] 첫 결제 실패:', e.message); }
+    // 빌링키가 있으면 첫 9,900원 결제 시도(실패해도 구독 활성은 진행 — 다음 달 크론이 재청구).
+    let charged = false;
+    if (payerId) {
+      try {
+        const r = await fetch('https://cpay.payple.kr/php/SimplePayCardAct.php?ACT_=PAYM', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Referer': WEBHOOK_URL },
+          body: JSON.stringify({
+            PCD_CST_ID: data.PCD_CST_ID || '', PCD_CUST_KEY: data.PCD_CUST_KEY || '',
+            PCD_AUTH_KEY: data.PCD_AUTH_KEY || '', PCD_PAY_TYPE: 'card',
+            PCD_PAYER_ID: payerId, PCD_PAY_GOODS: 'AI금융집짓기 프리미엄 구독',
+            PCD_PAY_TOTAL: '9900', PCD_PAY_OID: 'BILL_AIMONEYA_' + Date.now(),
+            PCD_SIMPLE_FLAG: 'Y', PCD_PAYER_NO: uid,
+            PCD_PAYER_NAME: payerName, PCD_PAYER_HP: payerPhone, PCD_PAYER_EMAIL: payerEmail,
+          })
+        });
+        const j = await r.json();
+        charged = (j.PCD_PAY_RST === 'success');
+        console.log('[ai-moneya 구독] 첫 결제 응답:', j.PCD_PAY_RST, j.PCD_PAY_MSG || '');
+      } catch (e) { console.error('[ai-moneya 구독] 첫 결제 오류:', e.message); }
+    }
 
+    // 카드등록/결제가 됐으면 구독 활성(자물쇠 해제). 빌링키는 매월 청구용으로 저장.
+    const active = regOk;
     const nb = new Date(); nb.setMonth(nb.getMonth() + 1);
     await recordAiMoneyaSubscription(uid, {
-      billingKey: payerId, nextBillingAtISO: nb.toISOString().slice(0, 10), amount: 9900, ok,
+      billingKey: payerId, nextBillingAtISO: nb.toISOString().slice(0, 10), amount: 9900, ok: active,
     });
+    console.log('[ai-moneya 구독] 기록 요청 완료 uid=', uid, 'active=', active, 'charged=', charged);
 
-    // 앱으로 딥링크 복귀 (WebView가 이 스킴을 감지 → 앱 화면)
-    return res.redirect(302, `aimoneya://sub/done?ok=${ok ? '1' : '0'}`);
+    // 앱으로 딥링크 복귀 (WebView가 이 스킴을 감지 → 앱 화면). FH_AIMONEYA_SUB_은 절대 옛 로직으로 안 감.
+    return res.redirect(302, `aimoneya://sub/done?ok=${active ? '1' : '0'}`);
   }
 
   // ★ 강의 결제 감지 (PCD_PAY_GOODS에 "강의" 포함)
