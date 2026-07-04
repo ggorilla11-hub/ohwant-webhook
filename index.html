@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>오원트 웹훅 · 정상</title>
+<style>
+  body{font-family:-apple-system,'Malgun Gothic',sans-serif;background:#0B1B32;color:#eaf1fb;
+    display:flex;min-height:100vh;margin:0;align-items:center;justify-content:center;padding:24px;}
+  .card{max-width:520px;text-align:center;}
+  .ok{display:inline-block;background:#1D9E75;color:#fff;font-weight:700;padding:6px 16px;border-radius:20px;font-size:14px;}
+  h1{font-size:22px;margin:18px 0 6px;}
+  p{color:#9FB4D4;font-size:14px;line-height:1.7;}
+  .ep{margin-top:22px;text-align:left;background:#16335C;border-radius:12px;padding:16px 18px;font-size:13px;}
+  .ep code{color:#7FE0C0;}
+  .ep div{margin:6px 0;}
+</style>
+</head>
+<body>
+  <div class="card">
+    <span class="ok">● 정상 작동 중</span>
+    <h1>오원트금융연구소 페이플 웹훅</h1>
+    <p>이 서버는 결제 웹훅 전용입니다. 홈페이지가 아니라 아래 엔드포인트로 동작합니다.</p>
+    <div class="ep">
+      <div>결제 인증: <code>POST /api/payple-auth</code></div>
+      <div>결제 완료 웹훅: <code>POST /api/payple</code></div>
+      <div>헬스체크: <code>GET /api/payple-auth</code> → <code>{ status: "OK" }</code></div>
+    </div>
+  </div>
+</body>
+</html>
