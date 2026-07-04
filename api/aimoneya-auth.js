@@ -41,13 +41,14 @@ module.exports = async function handler(req, res) {
       PCD_SIMPLE_FLAG: 'Y',
     });
 
-    // ※ 진단 결론: 이 계정은 서버 auth.php(custKey)가 '어떤 도메인으로도' AUTH0004(단건 되던 netlify 포함).
-    //   → 서버 정기결제 API 미활성으로 보임. 결제는 브라우저 clientKey 흐름(payment.js)으로 우회 예정.
+    // ※ 진단 확정(2026-07-04): 이 코드는 정상. Payple 공식 테스트 계정(democpay)으로 동일 요청 시
+    //   result=success("사용자 인증 완료"). 라이브(cst_id ohwant)만 AUTH0004 → 라이브 계정에
+    //   결제 도메인 'ohwant-webhook.vercel.app' 등록 + 정기결제 API 권한이 필요(대표 액션).
     const authResponse = await fetch('https://cpay.payple.kr/php/auth.php', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded',
-        'Referer': 'https://ohwant-webhook.vercel.app/api/payple',
+        'Referer': 'https://ohwant-webhook.vercel.app',
       },
       body: params.toString(),
     });
