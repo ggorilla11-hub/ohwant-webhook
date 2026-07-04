@@ -45,9 +45,9 @@ module.exports = async function handler(req, res) {
       method: 'POST',
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded',
-        // Payple 도메인 검사(AUTH0004) 통과용 Referer. 같은 계정(ohwant)에서 이미 등록·작동 중인
-        // 옛 상품 도메인을 재사용 → 새 도메인 등록 없이 인증 통과. (옛 결제와 동일 도메인)
-        'Referer': 'https://financial-house-building.vercel.app',
+        // ⚠️ 이 도메인(ohwant-webhook.vercel.app)을 Payple 파트너 관리자에 등록해야 AUTH0004가 풀린다.
+        //    (테스트로 옛 등록도메인 재사용도 시도했으나 AUTH0004 지속 → 정식 등록 필요)
+        'Referer': 'https://ohwant-webhook.vercel.app',
       },
       body: params.toString(),
     });
