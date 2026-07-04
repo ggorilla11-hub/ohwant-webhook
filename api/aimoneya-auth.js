@@ -41,13 +41,13 @@ module.exports = async function handler(req, res) {
       PCD_SIMPLE_FLAG: 'Y',
     });
 
-    // 등록 도메인 탐색(진단): ?testref=<url> 로 여러 도메인을 Referer로 시험 → 통과하는 등록 도메인 발견용.
-    const referer = (req.query && req.query.testref) || 'https://ohwant-webhook.vercel.app/api/payple';
+    // ※ 진단 결론: 이 계정은 서버 auth.php(custKey)가 '어떤 도메인으로도' AUTH0004(단건 되던 netlify 포함).
+    //   → 서버 정기결제 API 미활성으로 보임. 결제는 브라우저 clientKey 흐름(payment.js)으로 우회 예정.
     const authResponse = await fetch('https://cpay.payple.kr/php/auth.php', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded',
-        'Referer': referer,
+        'Referer': 'https://ohwant-webhook.vercel.app/api/payple',
       },
       body: params.toString(),
     });
