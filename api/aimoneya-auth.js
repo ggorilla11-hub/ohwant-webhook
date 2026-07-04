@@ -45,8 +45,9 @@ module.exports = async function handler(req, res) {
       method: 'POST',
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded',
-        // ⚠️ 이 도메인(ohwant-webhook.vercel.app)이 Payple 파트너 관리자 허용목록에 있어야 함
-        'Referer': 'https://ohwant-webhook.vercel.app',
+        // Payple 도메인 검사(AUTH0004) 통과용 Referer. 같은 계정(ohwant)에서 이미 등록·작동 중인
+        // 옛 상품 도메인을 재사용 → 새 도메인 등록 없이 인증 통과. (옛 결제와 동일 도메인)
+        'Referer': 'https://financial-house-building.vercel.app',
       },
       body: params.toString(),
     });
