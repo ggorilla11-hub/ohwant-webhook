@@ -24,6 +24,52 @@ if (!admin.apps.length && process.env.FIREBASE_SERVICE_ACCOUNT) {
   } catch (e) { console.error('[firebase-admin 초기화 실패]', e.message); }
 }
 
+// 신규 앱(AI금융집짓기) 결제페이지·빌링 Referer용 도메인
+const WEBHOOK_URL = 'https://ohwant-webhook.vercel.app';
+
+// ── ai-moneya (새 앱: AI금융집짓기 정기구독) 전용 Firebase Admin ──
+// Vercel 환경변수 FIREBASE_SERVICE_ACCOUNT_AIMONEYA = ai-moneya 서비스계정 키 JSON 전체.
+//   ⚠️ 대표가 나중에 Vercel에 직접 입력. 미설정이면 ai-moneya 기록은 조용히 스킵(옛 상품엔 영향 없음).
+let aimoneyaDb = null;
+if (process.env.FIREBASE_SERVICE_ACCOUNT_AIMONEYA) {
+  try {
+    const existing = admin.apps.find((a) => a && a.name === 'aimoneya');
+    const app = existing || admin.initializeApp(
+      { credential: admin.credential.cert(JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_AIMONEYA)) },
+      'aimoneya'
+    );
+    aimoneyaDb = app.firestore();
+  } catch (e) { console.error('[ai-moneya admin 초기화 실패]', e.message); }
+}
+
+// AI금융집짓기 구독 활성 기록: 앱용 상태 + 서버전용 빌링키(분리 저장)
+async function recordAiMoneyaSubscription(uid, opts) {
+  const { billingKey, nextBillingAtISO, amount, ok } = opts;
+  if (!uid || !aimoneyaDb) { console.log('[ai-moneya 구독] 스킵(uid 또는 서비스계정 미설정)'); return; }
+  const FV = admin.firestore.FieldValue;
+  try {
+    // 앱이 읽는 상태(보안규칙: 본인만 read) — 빌링키는 넣지 않음
+    await aimoneyaDb.doc(`users/${uid}/subscription/current`).set({
+      status: ok ? 'active' : 'past_due',
+      plan: 'premium_monthly', price: amount || 9900, currency: 'KRW',
+      startedAt: FV.serverTimestamp(),
+      nextBillingAt: nextBillingAtISO || null,
+      lastPaidAt: ok ? FV.serverTimestamp() : null,
+      updatedAt: FV.serverTimestamp(),
+    }, { merge: true });
+    // 서버 전용(보안규칙: 클라이언트 접근 전면 차단) — 매월 청구용 빌링키
+    await aimoneyaDb.doc(`billing/${uid}`).set({
+      billingKey: billingKey || '',
+      cstId: process.env.PAYPLE_CST_ID || 'ohwant',
+      status: ok ? 'active' : 'past_due',
+      nextBillingAt: nextBillingAtISO || null,
+      retryCount: 0, lastResult: ok ? 'first_charge_ok' : 'first_charge_fail',
+      updatedAt: FV.serverTimestamp(),
+    }, { merge: true });
+    console.log('[ai-moneya 구독] 기록 완료 uid=', uid, 'ok=', ok);
+  } catch (e) { console.error('[ai-moneya 구독] 기록 실패:', e.message); }
+}
+
 // AI재무진단 결제자 → Firestore paid_users 자동 기록 (DESIRE 게이트용)
 async function recordPaidUser(email, oid, goods) {
   if (!email || !admin.apps.length) { console.log('[paid_users] 스킵(이메일 또는 admin 없음)'); return; }
@@ -191,11 +237,52 @@ module.exports = async function handler(req, res) {
 
   console.log('[페이플 웹훅 수신]', { rst, oid, total, payWork, payGoods, payerName, payerEmail, payerPhone, payerId: payerId ? '***발급됨***' : '없음' });
 
+  // ★ AUTH 방식: 카드등록 완료 (빌링키만 발급)
+  const isAuthMode = (payWork === 'AUTH');  // ★ 단건 오판 방지: 명시적 AUTH(구독)만 정기 처리.
+
+  // ══════════════════════════════════════════════════════════════
+  // ★ 신규 앱(AI금융집짓기) 정기구독 — OID prefix로 옛 상품과 완전 분리
+  //   옛 상품(구글시트·moneya-72fe6)은 이 블록 아래로 내려가지 않음.
+  // ══════════════════════════════════════════════════════════════
+  const AIMONEYA_OID_PREFIX = 'FH_AIMONEYA_SUB_';
+  const isAiMoneyaSub = oid.startsWith(AIMONEYA_OID_PREFIX);
+  if (isAiMoneyaSub && isAuthMode && payerId) {
+    // uid 복원: PCD_PAYER_NO(커스텀) → query.uid → OID에서 추출
+    const uid = data.PCD_PAYER_NO || payerUid ||
+                (oid.match(/^FH_AIMONEYA_SUB_(.+?)_\d+$/) || [])[1] || '';
+    console.log('[ai-moneya 구독] AUTH 완료, 첫 결제 시도 uid=', uid);
+
+    // 첫 실결제 9,900원 (빌링키). 옛 상품 로직과 독립.
+    let ok = false;
+    try {
+      const r = await fetch('https://cpay.payple.kr/php/SimplePayCardAct.php?ACT_=PAYM', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Referer': WEBHOOK_URL },
+        body: JSON.stringify({
+          PCD_CST_ID: data.PCD_CST_ID || '', PCD_CUST_KEY: data.PCD_CUST_KEY || '',
+          PCD_AUTH_KEY: data.PCD_AUTH_KEY || '', PCD_PAY_TYPE: 'card',
+          PCD_PAYER_ID: payerId, PCD_PAY_GOODS: 'AI금융집짓기 프리미엄 구독',
+          PCD_PAY_TOTAL: '9900', PCD_PAY_OID: 'BILL_AIMONEYA_' + Date.now(),
+          PCD_SIMPLE_FLAG: 'Y', PCD_PAYER_NO: uid,
+          PCD_PAYER_NAME: payerName, PCD_PAYER_HP: payerPhone, PCD_PAYER_EMAIL: payerEmail,
+        })
+      });
+      const j = await r.json();
+      ok = (j.PCD_PAY_RST === 'success');
+      console.log('[ai-moneya 구독] 첫 결제 응답:', j.PCD_PAY_RST, j.PCD_PAY_MSG || '');
+    } catch (e) { console.error('[ai-moneya 구독] 첫 결제 실패:', e.message); }
+
+    const nb = new Date(); nb.setMonth(nb.getMonth() + 1);
+    await recordAiMoneyaSubscription(uid, {
+      billingKey: payerId, nextBillingAtISO: nb.toISOString().slice(0, 10), amount: 9900, ok,
+    });
+
+    // 앱으로 딥링크 복귀 (WebView가 이 스킴을 감지 → 앱 화면)
+    return res.redirect(302, `aimoneya://sub/done?ok=${ok ? '1' : '0'}`);
+  }
+
   // ★ 강의 결제 감지 (PCD_PAY_GOODS에 "강의" 포함)
   const isLecturePayment = payGoods.includes('강의') || oid.includes('LECTURE') || planParam.includes('강의');
-
-  // ★ AUTH 방식: 카드등록 완료 (빌링키만 발급, 실결제 없음)
-  const isAuthMode = (payWork === 'AUTH');  // ★ 단건 오판 방지: 명시적 AUTH(구독)만 정기 처리. 기존 (!oid && payerId)가 링크/앱카드 단건을 정기로 잘못 처리하던 원인 → 제거
 
   if (isAuthMode && payerId) {
     console.log('[AUTH] 카드등록 완료 — 빌링키 발급:', payerId ? '***' : '없음');
