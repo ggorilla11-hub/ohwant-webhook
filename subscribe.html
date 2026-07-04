@@ -4,9 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>AI금융집짓기 프리미엄 구독</title>
-<!-- Payple 정기결제 SDK (jQuery + cpay.payple.kr) -->
-<script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
-<script src="https://cpay.payple.kr/js/cpay.payple.1.0.1.js"></script>
+<!-- Payple SDK — 과거 성공(financial-house-building)과 동일: 브라우저 clientKey 방식 -->
+<script src="https://cpay.payple.kr/js/v1/payment.js"></script>
 <style>
   :root{--teal:#0F6E56;--teal2:#5DCAA5;--teal-deep:#0A5343;--navy:#0B1B32;--ink:#0E1826;--sub:#6B7788;--line:#EAEDF2;--pale:#E6F7F1;}
   *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
@@ -86,32 +85,29 @@
 
   function subscribe(){
     if(!uid){ showErr('로그인 정보가 없어요. 앱에서 다시 시도해 주세요.'); return; }
+    if(typeof PaypleCpayAuthCheck !== 'function'){ showErr('결제 모듈을 불러오는 중이에요. 잠시 후 다시 눌러 주세요.'); return; }
     var btn=document.getElementById('payBtn'); btn.disabled=true; btn.textContent='결제창 여는 중…';
 
-    // 1) 서버 인증(빌링 AUTH) — uid 를 OID·PCD_PAYER_NO 에 실음
-    fetch(WEBHOOK+'/api/aimoneya-auth', {
-      method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({uid:uid})
-    }).then(function(r){return r.json();}).then(function(d){
-      if(d.result!=='success'){ showErr(d.message||'결제 인증에 실패했어요.'); reset(); return; }
-
-      // 2) Payple 카드등록 창 호출 (서버 인증정보 + 결제 파라미터)
-      var obj = Object.assign({}, d.auth, {
-        PCD_PAY_TYPE:'card',
-        PCD_PAY_WORK:'AUTH',
-        PCD_CARD_VER:'01',
-        PCD_PAYER_NO: uid,                 // ★ 커스텀 회원식별
-        PCD_PAY_GOODS:'AI금융집짓기 프리미엄 구독',
-        PCD_PAY_TOTAL: 9900,
-        PCD_PAY_OID: d.order_id,
-        PCD_REGULER_FLAG:'Y',
-        PCD_SIMPLE_FLAG:'Y',
-        PCD_RST_URL: WEBHOOK+'/api/payple',  // ★ 완료 통지 → 웹훅이 빌링키 저장 + 딥링크 복귀
-        callbackFunction: onResult
-      });
-      // Payple SDK 호출 (cpay.payple.kr)
-      try { PaypleCpayAuthCheck(obj); }
-      catch(e){ showErr('결제창을 열 수 없어요: '+e.message); reset(); }
-    }).catch(function(e){ showErr('네트워크 오류: '+e.message); reset(); });
+    // ── 과거 성공 방식(financial-house-building) 그대로: 브라우저에서 clientKey로 PaypleCpayAuthCheck ──
+    //   월정기 = AUTH(카드등록 → 빌링키 발급). 서버 auth.php(custKey)를 안 쓰므로 AUTH0004 없음.
+    //   서버(/api/payple)는 콜백의 AUTH_KEY로 첫 결제 + 빌링키 저장(FH_AIMONEYA_SUB_ 분기, 옛 상품과 동일 로직).
+    var order_id = 'FH_AIMONEYA_SUB_' + uid + '_' + Date.now();
+    var obj = {
+      clientKey:        'A5FAA5CC8F3A24C178790CF50FD1A19B',
+      PCD_PAY_TYPE:     'card',
+      PCD_CARD_VER:     '01',           // 정기빌링 필수
+      PCD_PAY_WORK:     'AUTH',         // 카드등록 = 빌링키 발급
+      PCD_REGULER_FLAG: 'Y',            // 월정기
+      PCD_SIMPLE_FLAG:  'Y',
+      PCD_PAYER_NO:     uid,            // 회원식별(웹훅이 uid 매칭)
+      PCD_PAY_GOODS:    'AI금융집짓기 프리미엄 구독',
+      PCD_PAY_TOTAL:    '9900',
+      PCD_PAY_OID:      order_id,
+      PCD_RST_URL:      WEBHOOK + '/api/payple?uid=' + encodeURIComponent(uid),
+      callbackFunction: onResult
+    };
+    try { PaypleCpayAuthCheck(obj); }
+    catch(e){ showErr('결제창을 열 수 없어요: '+e.message); reset(); }
   }
 
   // 3) 결제 결과 콜백 — 성공 시 앱으로 딥링크 복귀
