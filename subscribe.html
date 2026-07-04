@@ -4,7 +4,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>AI금융집짓기 프리미엄 구독</title>
-<!-- Payple SDK — 과거 성공(financial-house-building)과 동일: 브라우저 clientKey 방식 -->
+<!-- Payple SDK — 과거 성공(financial-house-building)과 동일: jQuery + v1/payment.js -->
+<!--   ※ v1/payment.js 내부가 jQuery($)를 사용하므로 반드시 먼저 로드해야 함(안 그러면 $ is not defined) -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.7.1/jquery.min.js"></script>
 <script src="https://cpay.payple.kr/js/v1/payment.js"></script>
 <style>
   :root{--teal:#0F6E56;--teal2:#5DCAA5;--teal-deep:#0A5343;--navy:#0B1B32;--ink:#0E1826;--sub:#6B7788;--line:#EAEDF2;--pale:#E6F7F1;}
