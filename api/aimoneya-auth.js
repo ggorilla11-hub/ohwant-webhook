@@ -41,14 +41,13 @@ module.exports = async function handler(req, res) {
       PCD_SIMPLE_FLAG: 'Y',
     });
 
-    // 과거 성공 결제가 등록·사용한 Referer(도메인+경로) 그대로 사용.
-    //   ※ 진단 결과: Referer 형식은 원인이 아님(6종 전부 AUTH0004, 옛 payple-auth도 동일).
-    //     custKey/cst_id(환경변수) 또는 Payple 계정 도메인등록이 원인.
+    // 등록 도메인 탐색(진단): ?testref=<url> 로 여러 도메인을 Referer로 시험 → 통과하는 등록 도메인 발견용.
+    const referer = (req.query && req.query.testref) || 'https://ohwant-webhook.vercel.app/api/payple';
     const authResponse = await fetch('https://cpay.payple.kr/php/auth.php', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded',
-        'Referer': 'https://ohwant-webhook.vercel.app/api/payple',
+        'Referer': referer,
       },
       body: params.toString(),
     });
