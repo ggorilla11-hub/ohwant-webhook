@@ -206,12 +206,13 @@ async function handleLecturePayment(data, payerName, payerPhone, payerEmail, tot
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// ★ 재무상담(연금진단) 결제 완료 처리 — 연금진단리드 시트 N→Y + 재무상담 감사메일
-//   기존 구독/강의/AI머니야/AI재무진단 로직과 완전 분리. 다른 상품에는 절대 영향 없음.
+// ★ 재무상담(연금진단) 결제 완료 처리
+//   시트·메일을 직접 하지 않고, 이미 검증된 우리 Apps Script 웹앱(연금진단리드)으로
+//   "결제완료" 신호만 넘긴다 → Apps Script가 대표님 계정으로 N→Y + 감사메일(MailApp) 처리.
+//   (남의 서비스계정 권한/GMAIL 자격 문제를 우회. 무료신청에서 이미 작동 검증된 통로)
+//   기존 구독/강의/AI머니야/AI재무진단 로직과 완전 분리.
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-const CONSULT_LEAD_SHEET_ID = '1sQZG3WSSAw7RZLIyvCCtxvr3biPuhdhvJsokXacEF_w'; // 통합리드 스프레드시트
-const CONSULT_LEAD_TAB       = '연금진단리드';
-// 금액 → 상품명 (4등급 금액이 전부 달라 금액으로 상품 구분)
+const CONSULT_WEBAPP_URL = 'https://script.google.com/macros/s/AKfycbxphDSQuXO8N07k7OWnO5hDZyXoH5Br7WB14mDCbsq1u7tvcO0GBCWxinQOAPUEd8xgyw/exec';
 const CONSULT_PRODUCTS = {
   '9900':    '전화 상담',
   '150000':  '비대면 화상',
@@ -223,102 +224,25 @@ function _digits(s){ return String(s == null ? '' : s).replace(/[^0-9]/g, ''); }
 async function handleConsultPayment(payerName, payerPhone, payerEmail, total) {
   const amountNum   = Number(_digits(total)) || 0;
   const productName = CONSULT_PRODUCTS[String(amountNum)] || '재무상담';
-  const nowLabel    = new Date().toLocaleString('ko-KR', { timeZone: 'Asia/Seoul' });
-  console.log('[재무상담] 처리 시작:', { productName, amountNum, payerName, payerPhone, payerEmail });
-
-  // ── ① 연금진단리드 시트: 이름+연락처+금액 매칭 → 결제여부 N→Y (없으면 미매칭 새 줄) ──
-  // 컬럼: A신청일시 B구분 C이름 D연락처 E이메일 F편한시간 G월부족액 H추가월납입 I바닥나이
-  //       J월연금소득 K필요생활비 L부부여부 M유입경로 N유무료 O상품명 P금액 Q결제여부
+  console.log('[재무상담] Apps Script로 결제완료 전달:', { productName, amountNum, payerName, payerPhone, payerEmail });
   try {
-    const saJson = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT || '{}');
-    const auth   = new google.auth.GoogleAuth({ credentials: saJson, scopes: ['https://www.googleapis.com/auth/spreadsheets'] });
-    const sheets = google.sheets({ version: 'v4', auth });
-
-    const resp = await sheets.spreadsheets.values.get({
-      spreadsheetId: CONSULT_LEAD_SHEET_ID,
-      range: `${CONSULT_LEAD_TAB}!A:Q`,
+    const resp = await fetch(CONSULT_WEBAPP_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        kind:    'payment_complete',
+        name:    payerName || '',
+        phone:   payerPhone || '',
+        email:   payerEmail || '',
+        amount:  amountNum,
+        product: productName,
+        oid:     '',
+        ts:      new Date().toISOString(),
+      }),
     });
-    const rows = resp.data.values || [];
-    const NAME = 2, PHONE = 3, EMAIL = 4, FREEPAID = 13, AMOUNT = 15, PAIDYN = 16;
-    const wantPhone = _digits(payerPhone);
-
-    // 뒤에서부터(최신) 검색: 유료 + 결제여부 N + 금액 일치. 이름·연락처까지 맞으면 정밀매칭 우선.
-    let exactRow = -1, looseRow = -1;
-    for (let i = rows.length - 1; i >= 1; i--) {
-      const r = rows[i];
-      const isPaid = (r[FREEPAID] === '유료');
-      const isN    = (String(r[PAIDYN] || '').toUpperCase() === 'N');
-      const amtOk  = (Number(_digits(r[AMOUNT])) === amountNum);
-      if (!isPaid || !isN || !amtOk) continue;
-      if (looseRow === -1) looseRow = i;   // 금액만 맞는 최신줄(백업)
-      const nameOk  = payerName && r[NAME]  && String(r[NAME]).trim()  === String(payerName).trim();
-      const phoneOk = wantPhone && _digits(r[PHONE]) === wantPhone;
-      if (nameOk && phoneOk) { exactRow = i; break; }
-    }
-    const rowIdx = (exactRow !== -1) ? exactRow : looseRow;
-
-    if (rowIdx !== -1) {
-      const sr = rowIdx + 1;               // 시트는 1-base
-      const cur = rows[rowIdx];
-      const updates = [{ range: `${CONSULT_LEAD_TAB}!Q${sr}`, values: [['Y']] }];
-      if (!cur[NAME]  && payerName)  updates.push({ range: `${CONSULT_LEAD_TAB}!C${sr}`, values: [[payerName]] });
-      if (!cur[PHONE] && payerPhone) updates.push({ range: `${CONSULT_LEAD_TAB}!D${sr}`, values: [[payerPhone]] });
-      if (!cur[EMAIL] && payerEmail) updates.push({ range: `${CONSULT_LEAD_TAB}!E${sr}`, values: [[payerEmail]] });
-      for (const u of updates) {
-        await sheets.spreadsheets.values.update({
-          spreadsheetId: CONSULT_LEAD_SHEET_ID, range: u.range,
-          valueInputOption: 'USER_ENTERED', requestBody: { values: u.values },
-        });
-      }
-      console.log('[재무상담] 매칭 성공 → 결제여부 Y (행', sr, ')');
-    } else {
-      await sheets.spreadsheets.values.append({
-        spreadsheetId: CONSULT_LEAD_SHEET_ID,
-        range: `${CONSULT_LEAD_TAB}!A:Q`,
-        valueInputOption: 'USER_ENTERED',
-        requestBody: { values: [[
-          nowLabel, '유료상담', payerName || '', payerPhone || '', payerEmail || '', '',
-          '', '', '', '', '', '', 'payple',
-          '유료', productName, amountNum, '결제됨(미매칭)',
-        ]] },
-      });
-      console.log('[재무상담] 미매칭 → 새 줄 기록(결제됨(미매칭))');
-    }
+    console.log('[재무상담] Apps Script 전달 완료:', resp.status);
   } catch (e) {
-    console.error('[재무상담] 시트 처리 실패:', e.message);
-  }
-
-  // ── ② 재무상담 전용 감사 이메일 (★ AI머니야 메일 아님) ──
-  if (payerEmail) {
-    try {
-      const transporter = nodemailer.createTransport({
-        service: 'gmail',
-        auth: { user: process.env.GMAIL_USER, pass: process.env.GMAIL_PASS },
-      });
-      const amountFmt = amountNum.toLocaleString('ko-KR');
-      const recipient = payerName || '고객';
-      await transporter.sendMail({
-        from: `"오상열 CFP · 오원트금융연구소" <${process.env.GMAIL_USER}>`,
-        to: payerEmail,
-        subject: `[오원트] ${recipient}님, 상담 결제가 완료되었습니다`,
-        html:
-          '<div style="font-family:Pretendard,Apple SD Gothic Neo,sans-serif;max-width:560px;margin:0 auto;color:#1a2b24">'
-          + '<h2 style="color:#0E7C7B;margin-bottom:6px">' + recipient + '님, 상담 결제가 완료되었습니다</h2>'
-          + '<p style="font-size:13px;color:#5c6b62;margin-top:0">오원트금융연구소</p>'
-          + '<div style="background:#F3F8F6;border-radius:12px;padding:16px 18px;margin:18px 0;font-size:14px;line-height:1.9">'
-          +   '<b>결제 정보</b><br>· 상담 상품: ' + productName + '<br>· 결제 금액: ₩' + amountFmt
-          + '</div>'
-          + '<p style="font-size:14px;line-height:1.7">감사합니다. <b>곧 담당자가 일정 조율을 위해 연락</b>드리겠습니다.<br>'
-          +   '상담 전 궁금한 점은 아래 연락처로 편하게 문의해 주세요.</p>'
-          + '<hr style="border:none;border-top:1px solid #dbe7e1;margin:20px 0">'
-          + '<p style="font-size:13px;color:#5c6b62;line-height:1.8">오상열 CFP · 국제공인재무설계사<br>'
-          +   '오원트금융연구소 · <b>010-5424-5332</b></p>'
-          + '</div>',
-      });
-      console.log('[재무상담] 감사 이메일 발송 →', payerEmail);
-    } catch (e) {
-      console.error('[재무상담] 감사 이메일 실패:', e.message);
-    }
+    console.error('[재무상담] Apps Script 전달 실패:', e.message);
   }
 }
 
