@@ -213,6 +213,9 @@ async function handleLecturePayment(data, payerName, payerPhone, payerEmail, tot
 //   기존 구독/강의/AI머니야/AI재무진단 로직과 완전 분리.
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 const CONSULT_WEBAPP_URL = 'https://script.google.com/macros/s/AKfycbxphDSQuXO8N07k7OWnO5hDZyXoH5Br7WB14mDCbsq1u7tvcO0GBCWxinQOAPUEd8xgyw/exec';
+// ★추가(2026-08-09) 「통합리드」 웹앱 — consult.html·apply.html이 신청 단계를 보내는 그 주소.
+//   결제 완료도 여기로 보내야 통합리드의 '결제여부'가 N→Y가 된다. (위 연금진단리드 주소와 별개)
+const UNIFIED_WEBAPP_URL = 'https://script.google.com/macros/s/AKfycbxwKffiqlQhgTsur1-gp9zAvas9d1h-DmJhhtsyz9tqqXNcZJIL04VYLiANf8nTKmFd/exec';
 const CONSULT_PRODUCTS = {
   '9900':    '전화 상담',
   '150000':  '비대면 화상',
@@ -243,6 +246,30 @@ async function handleConsultPayment(payerName, payerPhone, payerEmail, total) {
     console.log('[재무상담] Apps Script 전달 완료:', resp.status);
   } catch (e) {
     console.error('[재무상담] Apps Script 전달 실패:', e.message);
+  }
+
+  // ★추가(2026-08-09) 「통합리드」에도 결제 완료를 보낸다.
+  //   위 연금진단리드 전송과 완전히 분리된 try/catch — 한쪽이 실패해도 다른 쪽은 그대로 간다.
+  //   통합리드 Code.gs는 d.결제여부==='Y'(또는 d.PCD_PAY_RST==='success')를 결제로 인식한다.
+  try {
+    const resp2 = await fetch(UNIFIED_WEBAPP_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        source:   '재무상담',
+        단계:     '결제',
+        결제여부: 'Y',
+        이름:     payerName  || '',
+        휴대폰:   payerPhone || '',
+        이메일:   payerEmail || '',
+        상품:     productName,
+        과정:     productName,   // Code.gs가 '과정' 칸에 넣는 키
+        금액:     amountNum,
+      }),
+    });
+    console.log('[재무상담] 통합리드 전달 완료:', resp2.status);
+  } catch (e) {
+    console.error('[재무상담] 통합리드 전달 실패:', e.message);
   }
 }
 
