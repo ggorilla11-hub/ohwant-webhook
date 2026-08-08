@@ -273,6 +273,38 @@ async function handleConsultPayment(payerName, payerPhone, payerEmail, total) {
   }
 }
 
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// ★추가(2026-08-09) 부트캠프(genya-bootcamp apply.html) 결제 완료 처리
+//   apply.html이 SDK로 결제하면서 PCD_PAY_GOODS='부트캠프_5500000'을 보낸다.
+//   재무상담과 달리 연금진단리드는 건드리지 않고 「통합리드」에만 기록한다.
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+const BOOTCAMP_PRODUCT = 'AI에이전트 부트캠프 지니야';
+
+async function handleBootcampPayment(payerName, payerPhone, payerEmail, total) {
+  const amountNum = Number(_digits(total)) || 0;
+  console.log('[부트캠프] 통합리드로 결제완료 전달:', { amountNum, payerName, payerPhone, payerEmail });
+  try {
+    const resp = await fetch(UNIFIED_WEBAPP_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        source:   '부트캠프',
+        단계:     '결제',
+        결제여부: 'Y',
+        이름:     payerName  || '',
+        휴대폰:   payerPhone || '',
+        이메일:   payerEmail || '',
+        상품:     BOOTCAMP_PRODUCT,
+        과정:     BOOTCAMP_PRODUCT,
+        금액:     amountNum,
+      }),
+    });
+    console.log('[부트캠프] 통합리드 전달 완료:', resp.status);
+  } catch (e) {
+    console.error('[부트캠프] 통합리드 전달 실패:', e.message);
+  }
+}
+
 module.exports = async function handler(req, res) {
 
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -477,6 +509,18 @@ module.exports = async function handler(req, res) {
     await handleConsultPayment(payerName, payerPhone, payerEmail, total);
     // 페이플 링크 방식 → 앱 복귀 없이 200 응답
     return res.status(200).json({ result: 'ok', type: 'consult', goods: payGoods });
+  }
+
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  // ★추가(2026-08-09) 부트캠프 결제 완료 (별도 분기)
+  //   상품명 '부트캠프_5500000' 또는 주문번호 'bootcamp_…' 으로 판별.
+  //   위 강의(361줄)·AI재무진단·재무상담 어디에도 걸리지 않으므로 전용 분기가 필요하다.
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  const isBootcampPayment = payGoods.includes('부트캠프') || String(oid).startsWith('bootcamp_');
+  if (isBootcampPayment) {
+    console.log('[부트캠프] 결제 완료 감지:', payGoods, total);
+    await handleBootcampPayment(payerName, payerPhone, payerEmail, total);
+    return res.status(200).json({ result: 'ok', type: 'bootcamp', goods: payGoods });
   }
 
   // 일반 결제 (단일/연회비)
